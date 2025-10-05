@@ -107,48 +107,52 @@ https://n8n.example.com
 ```mermaid
 flowchart LR
   subgraph Proxy
-    Caddy[Caddy Reverse Proxy]
+    Caddy[Caddy Reverse Proxy];
   end
 
   subgraph Core
-    Django[Django (Stripe)]
-    Odoo[Odoo (ERP)]
-    Nextcloud[Nextcloud]
-    Redmine[Redmine]
-    DokuWiki[DokuWiki]
-    n8n[n8n]
+    Django[Django – Stripe];
+    Odoo[Odoo – ERP];
+    Nextcloud[Nextcloud];
+    Redmine[Redmine];
+    DokuWiki[DokuWiki];
+    N8N[n8n];
   end
 
   subgraph Databases
-    PGD[(Postgres Django)]
-    PGO[(Postgres Odoo)]
-    MR[(MariaDB Redmine)]
-    MN[(MariaDB Nextcloud)]
+    PGD[(Postgres Django)];
+    PGO[(Postgres Odoo)];
+    MR[(MariaDB Redmine)];
+    MN[(MariaDB Nextcloud)];
   end
 
   subgraph Backup
-    B[Backup Container]
+    B[Backup Container];
   end
 
-  Client((Browser)) --> Caddy
-  Caddy --> Django
-  Caddy --> Odoo
-  Caddy --> Nextcloud
-  Caddy --> Redmine
-  Caddy --> DokuWiki
-  Caddy --> n8n
-  Django --- n8n
-  n8n --- Odoo
-  n8n --- Nextcloud
-  n8n --- Redmine
-  Django --- PGD
-  Odoo --- PGO
-  Redmine --- MR
-  Nextcloud --- MN
-  B --- PGD
-  B --- PGO
-  B --- MR
-  B --- MN
+  Client((Browser)) --> Caddy;
+  Caddy --> Django;
+  Caddy --> Odoo;
+  Caddy --> Nextcloud;
+  Caddy --> Redmine;
+  Caddy --> DokuWiki;
+  Caddy --> N8N;
+
+  Django --- N8N;
+  N8N --- Odoo;
+  N8N --- Nextcloud;
+  N8N --- Redmine;
+
+  Django --- PGD;
+  Odoo --- PGO;
+  Redmine --- MR;
+  Nextcloud --- MN;
+
+  B --- PGD;
+  B --- PGO;
+  B --- MR;
+  B --- MN;
+
 ```
 
 ---
