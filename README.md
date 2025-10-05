@@ -3,7 +3,7 @@
 *An open-source integrated business cloud stack for SaaS and SMEs.*
 
 <p align="center">
-  <a href="https://github.com/antoniotrento/cloudetta"><img src="https://img.shields.io/github/v/release/antoniotrento/cloudetta?style=for-the-badge&color=brightgreen" alt="release"></a>
+  <a href="https://github.com/cloudetta/cloudetta"><img src="https://img.shields.io/github/v/release/cloudetta/cloudetta?style=for-the-badge&color=brightgreen" alt="release"></a>
   <a href="https://github.com/antoniotrento/cloudetta/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=for-the-badge" alt="license"></a>
   <a href="https://www.docker.com/"><img src="https://img.shields.io/badge/docker-ready-blue?style=for-the-badge&logo=docker" alt="docker"></a>
   <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.11+-yellow?style=for-the-badge&logo=python" alt="python"></a>
