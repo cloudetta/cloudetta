@@ -1,0 +1,140 @@
+# =========================
+# OpenBizKit .gitignore
+# Stack: Django + Odoo + n8n + Nextcloud + Redmine + DokuWiki
+# =========================
+
+# --- Python / Django ---
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-wheel-metadata/
+*.sqlite3
+db.sqlite3
+
+# --- Django specific ---
+staticfiles/
+media/
+*.log
+*.pot
+*.pyc
+local_settings.py
+
+# --- Odoo ---
+odoo/.local/
+odoo/.vscode/
+odoo/.idea/
+odoo/odoo.conf
+odoo/.cache/
+odoo-addons/__pycache__/
+odoo-addons/*.pyc
+odoo-addons/.pytest_cache/
+odoo-addons/*.log
+
+# --- Nextcloud / Redmine / DokuWiki volumes ---
+nextcloud-data/
+nextcloud-db-data/
+redmine-data/
+redmine-db-data/
+dokuwiki-data/
+n8n-data/
+odoo-data/
+postgres-odoo-data/
+django-db-data/
+redis-data/
+
+# --- Docker / Compose ---
+*.pid
+*.seed
+*.bak
+*.swp
+docker-compose.override.yml
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+.backups/
+backups/
+backup/*.log
+backup/**/*.log
+data/
+tmp/
+logs/
+caddy_data/
+caddy_config/
+
+# --- System files ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+desktop.ini
+
+# --- Secrets / Env ---
+.env
+.env.local
+.env.*.local
+.envrc
+secrets.json
+*.key
+*.pem
+*.crt
+*.csr
+
+# --- n8n ---
+.n8n/
+*.json.backup
+n8n/workflows/*.json.backup
+
+# --- Node / JS (n8n) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# --- Backup Archives ---
+backups/
+*.bak
+*.old
+*.orig
+*.save
+*.swp
+*.swo
+*.tmp
+*.temp
+
+# --- Caddy / SSL ---
+caddy/acme/
+caddy/certs/
+caddy_data/
+caddy_config/
+
+# --- Generated docs ---
+docs/_build/
+*.pdf
+*.odt
+*.docx
+*.html
+
+# --- Misc ---
+__pypackages__/
+.tox/
+.cache/
+coverage/
+.coverage
+*.cover
+.hypothesis/
+*.pytest_cache/

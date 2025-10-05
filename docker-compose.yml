@@ -1,0 +1,218 @@
+version: "3.9"
+
+networks:
+  web:
+    driver: bridge
+  internal:
+    driver: bridge
+
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - web
+      - internal
+
+  django:
+    build: ./django
+    container_name: django
+    command: gunicorn django_project.wsgi:application --bind 0.0.0.0:8000
+    depends_on:
+      - django-db
+    environment:
+      - DJANGO_SETTINGS_MODULE=django_project.settings
+      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
+      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-django.localhost,django.example.com}
+      - DATABASE_URL=postgres://django:${DJANGO_DB_PASSWORD}@django-db:5432/django
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_xxx}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_xxx}
+    volumes:
+      - ./django:/app
+    ports:
+      - "8000:8000"
+    networks:
+      - internal
+
+  django-db:
+    image: postgres:15
+    container_name: django-db
+    environment:
+      - POSTGRES_DB=django
+      - POSTGRES_USER=django
+      - POSTGRES_PASSWORD=${DJANGO_DB_PASSWORD}
+    volumes:
+      - django-db-data:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  odoo:
+    build: ./odoo
+    container_name: odoo
+    depends_on:
+      - odoo-db
+      - redis
+    environment:
+      - HOST=odoo-db
+      - USER=odoo
+      - PASSWORD=${ODOO_DB_PASSWORD}
+    volumes:
+      - odoo-data:/var/lib/odoo
+      - ./odoo-addons:/mnt/extra-addons
+    networks:
+      - internal
+
+  odoo-db:
+    image: postgres:15
+    container_name: odoo-db
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=odoo
+      - POSTGRES_PASSWORD=${ODOO_DB_PASSWORD}
+    volumes:
+      - postgres-odoo-data:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  redis:
+    image: redis:7
+    container_name: redis
+    command: ["redis-server", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    networks:
+      - internal
+
+  redmine:
+    image: redmine:5
+    container_name: redmine
+    depends_on:
+      - redmine-db
+    environment:
+      REDMINE_DB_MYSQL: redmine-db
+      REDMINE_DB_PASSWORD: ${REDMINE_DB_PASSWORD}
+    volumes:
+      - redmine-data:/usr/src/redmine/files
+    networks:
+      - internal
+
+  redmine-db:
+    image: mariadb:10.6
+    container_name: redmine-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${REDMINE_ROOT_PW}
+      - MYSQL_DATABASE=redmine
+      - MYSQL_USER=redmine
+      - MYSQL_PASSWORD=${REDMINE_DB_PASSWORD}
+    volumes:
+      - redmine-db-data:/var/lib/mysql
+    networks:
+      - internal
+
+  nextcloud:
+    image: nextcloud:26
+    container_name: nextcloud
+    depends_on:
+      - nextcloud-db
+    environment:
+      - MYSQL_HOST=nextcloud-db
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+    volumes:
+      - nextcloud-data:/var/www/html
+    networks:
+      - internal
+
+  nextcloud-db:
+    image: mariadb:10.6
+    container_name: nextcloud-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_ROOT_PW}
+      - MYSQL_DATABASE=nextcloud
+      - MYSQL_USER=nextcloud
+      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
+    volumes:
+      - nextcloud-db-data:/var/lib/mysql
+    networks:
+      - internal
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    environment:
+      - GENERIC_TIMEZONE=Europe/Rome
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    networks:
+      - internal
+
+  dokuwiki:
+    image: linuxserver/dokuwiki:latest
+    container_name: dokuwiki
+    environment:
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - dokuwiki-data:/config
+    networks:
+      - internal
+
+  mail:
+    image: bytemark/smtp
+    container_name: mail
+    environment:
+      - PROVIDER=${MAIL_PROVIDER:-sendgrid}
+      - SMTP_USER=${MAIL_USER:-admin@example.com}
+      - SMTP_PASS=${MAIL_PASS:-changeme}
+    networks:
+      - internal
+
+  backup:
+    image: alpine:3.19
+    container_name: backup
+    volumes:
+      - django-db-data:/django-db-data
+      - odoo-data:/odoo-data
+      - postgres-odoo-data:/postgres-odoo-data
+      - redis-data:/redis-data
+      - redmine-data:/redmine-data
+      - redmine-db-data:/redmine-db-data
+      - nextcloud-data:/nextcloud-data
+      - nextcloud-db-data:/nextcloud-db-data
+      - dokuwiki-data:/dokuwiki-data
+      - n8n-data:/n8n-data
+      - ./backups:/backups
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./backup/backup.sh:/backup/backup.sh:ro
+    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash postgresql-client mariadb-client tar gzip && echo '0 2 * * * /backup/backup.sh >> /backups/backup.log 2>&1' | crontab - && crond -f"]
+    networks:
+      - internal
+
+volumes:
+  caddy_data:
+  caddy_config:
+  django-db-data:
+  odoo-data:
+  postgres-odoo-data:
+  redis-data:
+  redmine-data:
+  redmine-db-data:
+  nextcloud-data:
+  nextcloud-db-data:
+  n8n-data:
+  dokuwiki-data:
