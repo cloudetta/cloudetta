@@ -262,7 +262,7 @@ docker exec -it backup /backup/backup.sh
 * Branding personalizzato
 * Training team e supporto SLA
 
-📧 **Contact:** [antonio@antoniotrento.net](mailto:antonio@antoniotrento.net)
+📧 **Contact:** [info@antoniotrento.net](mailto:info@antoniotrento.net)
 
 ---
 
