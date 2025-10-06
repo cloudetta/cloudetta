@@ -47,14 +47,24 @@ git clone https://github.com/antoniotrento/cloudetta.git
 cd cloudetta
 cp .env.example .env
 # Configura le chiavi e le password (Stripe, DB, Mail, ecc.)
-chmod +x install.sh && ./install.sh
+chmod +x install.sh
 ````
+
+Poi esegui:
+```bash
+cd scripts
+chmod +x bootstrap_cloudetta.sh
+./bootstrap_cloudetta.sh
+```
 
 Poi esegui:
 
 ```bash
-./integration/setup_api_links.sh
+cd integration
+chmod +x setup_api_links.sh
+./setup_api_links.sh
 ```
+
 
 ### 🇬🇧 Installation
 
@@ -67,9 +77,18 @@ chmod +x install.sh && ./install.sh
 ```
 
 Then:
+```bash
+cd scripts
+chmod +x bootstrap_cloudetta.sh
+./bootstrap_cloudetta.sh
+```
+
+Then:
 
 ```bash
-./integration/setup_api_links.sh
+cd integration
+chmod +x setup_api_links.sh
+./setup_api_links.sh
 ```
 
 ✅ All services will be available on:
