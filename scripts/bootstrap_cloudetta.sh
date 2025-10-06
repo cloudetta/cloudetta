@@ -4,15 +4,16 @@ set -euo pipefail
 # ============================================================================
 # Cloudetta Bootstrap Installer
 # - Crea/aggiorna .env con credenziali base (mail incluse)
-# - Avvia docker compose
-# - Attende i servizi
+# - Avvia (o riutilizza) docker compose
+# - Attende i servizi (n8n, Nextcloud, Redmine, Django)
 # - Crea admin Django e Nextcloud (best-effort)
+# - (Opzionale) Esegue install.sh per SEED DEMO Odoo senza avviare stack
 # - Genera automaticamente la API key di Redmine e la salva in .env
-# - Lancia integration/setup_api_links.sh per collegare i workflow n8n
+# - Esegue integration/setup_api_links.sh con variabili già pronte
 # Idempotente: puoi rilanciarlo in sicurezza.
 # ============================================================================
 
-# === 0) Parametri desiderati per l’ambiente (modifica se vuoi) ===============
+# === 0) Parametri desiderati per l’ambiente (sovrascrivibili via env) ========
 DJANGO_ADMIN_USER="${DJANGO_ADMIN_USER:-admin}"
 DJANGO_ADMIN_EMAIL="${DJANGO_ADMIN_EMAIL:-admin@example.com}"
 DJANGO_ADMIN_PASS="${DJANGO_ADMIN_PASS:-ChangeMe!123}"
@@ -31,7 +32,6 @@ MAIL_PASS="${MAIL_PASS:-ChangeMe!Mail!123}"
 if [ ! -f .env ]; then
   echo "[bootstrap] Creo .env da .env.example"
   cp -f .env.example .env || true
-
   # Aggiorna chiavi principali nel nuovo .env
   tmpfile=$(mktemp)
   awk -v n8p="$N8N_PASSWORD" \
@@ -52,40 +52,38 @@ else
   echo "[bootstrap] Trovato .env esistente: non lo sovrascrivo"
 fi
 
-# Esporta le variabili in ambiente corrente
+# Esporta variabili
 set -a
 . ./.env
-# Sovrascrivi con le nostre scelte (se diverse)
+# assicura override se passate da env esterno
 N8N_PASSWORD="${N8N_PASSWORD:-$N8N_PASSWORD}"
 MAIL_PROVIDER="$MAIL_PROVIDER"
 MAIL_USER="$MAIL_USER"
 MAIL_PASS="$MAIL_PASS"
 set +a
 
-# === 2) Avvia docker compose =================================================
-echo "[bootstrap] Avvio docker compose…"
-docker compose up -d
+# === 2) Avvia (o riutilizza) docker compose ==================================
+if docker compose ps -q | grep -q .; then
+  echo "[bootstrap] Stack già attivo: non rilancio docker compose up."
+else
+  echo "[bootstrap] Avvio docker compose…"
+  docker compose up -d
+fi
 
-# === 3) Attendi che i servizi rispondano =====================================
+# === 3) Attesa servizi ========================================================
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"
 REDMINE_URL="${REDMINE_URL:-http://redmine:3000}"
 NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://nextcloud:80}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
 
 wait_on_http () {
-  local url="$1"
-  local tries="${2:-60}"
-  local sleep_s="${3:-2}"
+  local url="$1"; local tries="${2:-60}"; local sleep_s="${3:-2}"
   while [ "$tries" -gt 0 ]; do
     code=$(docker run --rm --network host curlimages/curl -s -o /dev/null -w "%{http_code}" "$url" || true)
-    if echo "$code" | grep -qE '^(200|302|401|403)$'; then
-      return 0
-    fi
-    tries=$((tries-1))
-    sleep "$sleep_s"
+    if echo "$code" | grep -qE '^(200|302|401|403)$'; then return 0; fi
+    tries=$((tries-1)); sleep "$sleep_s"
   done
-  echo "Timeout aspettando $url (ultimo codice: $code)"
-  return 1
+  echo "Timeout aspettando $url (ultimo codice: $code)"; return 1
 }
 
 echo "[bootstrap] Attendo servizi…"
@@ -134,7 +132,24 @@ docker compose exec -T nextcloud bash -lc '
   fi
 ' || true
 
-# 4c) Redmine: genera API key admin automaticamente e salvala in .env
+# 4c) (Opzionale) Seeds DEMO Odoo (senza comporre lo stack)
+if [ -f "./install.sh" ]; then
+  echo "[bootstrap] Eseguo install.sh per i dati demo Odoo…"
+  SKIP_COMPOSE=1 \
+  DEMO=1 \
+  DJANGO_USER="${DJANGO_ADMIN_USER}" \
+  DJANGO_PASS="${DJANGO_ADMIN_PASS}" \
+  NEXTCLOUD_USER="${NEXTCLOUD_ADMIN_USER}" \
+  NEXTCLOUD_PASS="${NEXTCLOUD_ADMIN_PASS}" \
+  N8N_USER="${N8N_USER}" \
+  N8N_PASSWORD="${N8N_PASSWORD}" \
+  REDMINE_API_KEY="${REDMINE_API_KEY:-}" \
+  bash ./install.sh || echo "WARN: install.sh ha dato errore; continuo comunque."
+else
+  echo "[bootstrap] install.sh non trovato: salto seed demo."
+fi
+
+# 4d) Redmine: genera API key admin e salvala in .env
 echo "[bootstrap] Genero API key Redmine…"
 REDMINE_KEY_OUTPUT=$(docker compose exec -T redmine bash -lc '
   if command -v bundle >/dev/null 2>&1; then
@@ -153,14 +168,13 @@ REDMINE_KEY_OUTPUT=$(docker compose exec -T redmine bash -lc '
     "
   else
     echo "ERR: rails/bundle non disponibili nel container"
-  end
+  fi
 ' 2>/dev/null || true)
 
 REDMINE_API_KEY_GENERATED="$(echo "$REDMINE_KEY_OUTPUT" | sed -n 's/^API_KEY=//p' | tr -d '\r\n')"
 
 if [ -n "${REDMINE_API_KEY_GENERATED}" ]; then
   echo "[bootstrap] API key Redmine ottenuta: ${REDMINE_API_KEY_GENERATED:0:6}********"
-  # Scrivi/aggiorna REDMINE_API_KEY in .env
   if grep -q '^REDMINE_API_KEY=' .env; then
     sed -i.bak "s/^REDMINE_API_KEY=.*/REDMINE_API_KEY=${REDMINE_API_KEY_GENERATED}/" .env
   else
@@ -169,10 +183,10 @@ if [ -n "${REDMINE_API_KEY_GENERATED}" ]; then
   export REDMINE_API_KEY="$REDMINE_API_KEY_GENERATED"
 else
   echo "[bootstrap] ATTENZIONE: impossibile ottenere la API key di Redmine in automatico."
-  echo "            Potrai inserirla manualmente in .env come REDMINE_API_KEY e rilanciare."
+  echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."
 fi
 
-# === 5) Esegui lo script di integrazione n8n con le variabili pronte =========
+# === 5) Integrazioni n8n (script già compatibile con .env) ====================
 echo "[bootstrap] Eseguo integration/setup_api_links.sh…"
 export DJANGO_USER="${DJANGO_ADMIN_USER}"
 export DJANGO_PASS="${DJANGO_ADMIN_PASS}"
@@ -180,12 +194,26 @@ export NEXTCLOUD_USER="${NEXTCLOUD_ADMIN_USER}"
 export NEXTCLOUD_PASS="${NEXTCLOUD_ADMIN_PASS}"
 export N8N_USER="${N8N_USER}"
 export N8N_PASS="${N8N_PASSWORD}"
-# REDMINE_API_KEY è già esportata sopra se ottenuta
-
 if [ -f "integration/setup_api_links.sh" ]; then
   bash integration/setup_api_links.sh
 else
   echo "WARN: integration/setup_api_links.sh non trovato. Salto."
 fi
 
-echo "[bootstrap] Completato."
+# === 6) Riepilogo =============================================================
+cat <<INFO
+
+[bootstrap] Completato.
+
+Accessi interni:
+- Django   → $DJANGO_URL   | utente: $DJANGO_ADMIN_USER
+- Redmine  → $REDMINE_URL  | utente: admin (password da UI)
+- Nextcloud→ $NEXTCLOUD_URL | utente: $NEXTCLOUD_ADMIN_USER
+- n8n      → $N8N_URL      | utente: $N8N_USER
+
+Mail (.env):
+- MAIL_PROVIDER=$MAIL_PROVIDER
+- MAIL_USER=$MAIL_USER
+- MAIL_PASS=******
+
+INFO
