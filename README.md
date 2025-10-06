@@ -51,6 +51,8 @@ chmod +x install.sh
 ````
 
 Poi esegui:
+
+Imposta le password e username per tutte le app (modificale da qui)
 ```bash
 cd scripts
 chmod +x bootstrap_cloudetta.sh
