@@ -59,7 +59,7 @@ chmod +x bootstrap_cloudetta.sh
 ./bootstrap_cloudetta.sh
 ```
 
-Poi esegui:
+In automatico bootstrap_cloudetta.sh esegue:
 
 ```bash
 cd integration
