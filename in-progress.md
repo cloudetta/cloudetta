@@ -1,219 +1,113 @@
-Perfetto — ora che “si vede tutto”, mettiamo **le stesse credenziali admin** ovunque, sistemiamo **Nextcloud trusted_domains**, e **mettiamo in sicurezza Odoo** (master password + DB creato). Ti lascio sia i **comandi immediati** (da copiare/incollare ora) sia le **patch** da tenere in bootstrap/compose per averlo già pronto sia in locale che online.
+Perfetto — questa è una situazione **molto comune**, e ti spiego subito perché succede e come risolverla in modo pratico ✅
 
 ---
 
-# 1) Unifica le credenziali (una volta sola in `.env`)
+## 🔒 Perché non vedi l’Amministrazione o il login
 
-Aggiungi/aggiorna queste chiavi nel tuo `.env`:
+In DokuWiki, la **pagina di amministrazione (“Admin”)** e il **pannello di login** compaiono **solo se**:
 
-```env
-# credenziali amministratore unificate
-ADMIN_USER=admin
-ADMIN_PASS=ChangeMe!123
-ADMIN_EMAIL=admin@example.com
+1. Il **controllo accessi (ACL)** è **attivo**, e
+2. Esiste **almeno un utente admin**.
 
-# odoo
-ODOO_DB=cloudetta
-ODOO_MASTER_PASSWORD=${ADMIN_PASS}       # o un valore diverso se preferisci
-ODOO_LANG=it_IT
-ODOO_DEMO=false                          # true/false
+Se non c’è autenticazione attiva (cioè DokuWiki è “open”, senza login), il sistema non mostra la voce “Amministrazione” e non puoi gestire plugin o configurazione da interfaccia grafica.
 
-# domini (locale+prod)
-PUBLIC_DOMAIN=example.tld                # metti il dominio prod, se c’è
-TRUSTED_DOMAINS=localhost,127.0.0.1,nextcloud, \
-nextcloud.localhost,${PUBLIC_DOMAIN}
+---
+
+## 🧭 Come attivare il login e la pagina di amministrazione
+
+Segui questi passaggi:
+
+### 1️⃣ Apri il file `conf/local.protected.php` o `conf/local.php`
+
+Cerca o aggiungi queste righe:
+
+```php
+$conf['useacl'] = 1;                 // Attiva il sistema ACL
+$conf['authtype'] = 'authplain';     // Usa il sistema utenti base
+$conf['superuser'] = '@admin';       // Gruppo amministratori
 ```
 
-> Nota: il bootstrap che ti ho dato già usa `DJANGO_ADMIN_*`, `NEXTCLOUD_ADMIN_*`, `N8N_*`. Con le variabili sopra, nei passi sotto le usiamo per allineare **Redmine, Nextcloud, n8n, Odoo e Wiki**.
-
 ---
 
-# 2) Login: cosa usare adesso (stato attuale)
+### 2️⃣ Crea il file utenti se non esiste
 
-* **Django**: `http://django.localhost/admin/` → **${DJANGO_ADMIN_USER}/${DJANGO_ADMIN_PASS}**
-  (dai log: creato correttamente)
-* **Nextcloud**: dopo fix trusted_domains (punto 3), admin sarà **${NEXTCLOUD_ADMIN_USER}/${NEXTCLOUD_ADMIN_PASS}**
-  (se bootstrap ha appena “installato”, li ha già impostati)
-* **Redmine**: di default è `admin/admin` → sotto ti do il comando per **uniformarlo a ${ADMIN_PASS}**
-* **n8n**: se vuoi bloccarlo con basic auth: **${ADMIN_USER}/${ADMIN_PASS}** (vedi punto 5)
-* **Odoo**: creeremo **master password** = `${ODOO_MASTER_PASSWORD}` e **DB** `${ODOO_DB}` con admin = **${ADMIN_EMAIL}/${ADMIN_PASS}**
-* **DokuWiki**: per semplificare e non dipendere dall’immagine, ti propongo **Basic Auth su Caddy** con **${ADMIN_USER}/${ADMIN_PASS}** (punto 6)
+Percorso:
 
----
+```
+conf/users.auth.php
+```
 
-# 3) Nextcloud – “dominio non attendibile”
+Se non esiste, crealo e aggiungi una riga in questo formato:
 
-Sistema **trusted_domains** (subito) e l’URL canonico per prod (se ce l’hai):
+```
+admin:$1$abc123$abc123abc123abc123abc12:Admin Name:admin@example.com:admin,user
+```
+
+💡 Puoi generare la password cifrata in DokuWiki stessa (una volta abilitato il login) o usare il comando PHP:
 
 ```bash
-# elenca (debug)
-docker compose exec -T nextcloud bash -lc 'occ config:system:get trusted_domains || true'
-
-# AZZERA e reimposta from scratch (0..N). È idempotente.
-docker compose exec -T nextcloud bash -lc '
-set -e
-idx=0
-for d in ${TRUSTED_DOMAINS//,/ }; do
-  occ config:system:set trusted_domains '"$idx"' --value "$d"
-  idx=$((idx+1))
-done
-# opzionale: URL canonico per CLI/cron (se hai dominio prod)
-if [ -n "${PUBLIC_DOMAIN:-}" ]; then
-  occ config:system:set overwrite.cli.url --value "https://${PUBLIC_DOMAIN}"
-fi
-'
+php -r "echo crypt('tua_password', substr(md5(rand()), 0, 2));"
 ```
 
-Dopo questo apre bene:
+oppure lascia temporaneamente una password semplice tipo:
 
-* locale: `http://nextcloud.localhost`
-* prod: `https://$PUBLIC_DOMAIN` (Caddy farà TLS auto)
+```
+admin:admin:Admin Name:admin@example.com:admin,user
+```
 
-> Se preferisci incorporarlo nel **bootstrap**, metti quelle 8 righe dopo il blocco “Nextcloud install/config”.
+*(solo per test, poi cambiala!)*
 
 ---
 
-# 4) Redmine – imposta password/email admin unificate
+### 3️⃣ Riavvia il sito (o svuota cache)
 
-Porta l’utente `admin` alla stessa password/email dell’admin “globale”:
-
-```bash
-docker compose exec -T \
-  -e ADMIN_PASS="$ADMIN_PASS" \
-  -e ADMIN_EMAIL="$ADMIN_EMAIL" \
-  redmine bash -lc '
-bundle exec rails runner "
-  u = User.find_by_login(\"admin\")
-  if u
-    u.password = ENV[\"ADMIN_PASS\"]
-    u.password_confirmation = ENV[\"ADMIN_PASS\"]
-    u.mail = ENV[\"ADMIN_EMAIL\"]
-    u.must_change_passwd = false
-    u.save!
-    puts \"Redmine admin aggiornato: #{u.mail}\"
-  else
-    puts \"ERRORE: utente admin non trovato\"
-  end
-"
-'
-```
-
-> (Puoi mettere questo snippet **dopo** le migrazioni Redmine nel bootstrap, così è già allineato ad ogni deploy.)
+Dopo aver salvato le modifiche, ricarica DokuWiki.
+Dovresti vedere in alto un link “Login”.
+Accedi con il tuo utente `admin`, e vedrai apparire anche la voce **“Amministrazione”**.
 
 ---
 
-# 5) n8n – abilita Basic Auth con le credenziali unificate
+## ⚙️ 4️⃣ Aggiungere o gestire plugin
 
-Nel `docker-compose.yml` del servizio **n8n**, aggiungi:
+Dopo aver riattivato il pannello admin, potrai:
 
-```yaml
-environment:
-  - N8N_BASIC_AUTH_ACTIVE=true
-  - N8N_BASIC_AUTH_USER=${ADMIN_USER}
-  - N8N_BASIC_AUTH_PASSWORD=${ADMIN_PASS}
-```
+* Andare su **Amministrazione → Gestione estensioni**
+* Cercare e installare nuovi plugin direttamente online
+  *(usa l’interfaccia ufficiale che scarica i pacchetti da dokuwiki.org)*
 
-Poi:
+Oppure manualmente:
 
-```bash
-docker compose up -d n8n
-```
+1. Scarica lo zip del plugin da [https://www.dokuwiki.org/plugins](https://www.dokuwiki.org/plugins)
+2. Scompattalo in
 
-Ora accedi con **${ADMIN_USER}/${ADMIN_PASS}**.
-
----
-
-# 6) DokuWiki – proteggilo subito con Basic Auth su Caddy
-
-È la via più robusta e indipendente dall’immagine usata. Genera l’hash bcrypt della tua password:
-
-```bash
-docker compose exec -T caddy caddy hash-password --plaintext "$ADMIN_PASS"
-# copia il risultato, tipo: $2a$14$........
-```
-
-Nel tuo `Caddyfile` (host wiki), aggiungi:
-
-```caddy
-wiki.localhost {
-  basicauth /* {
-    {env.ADMIN_USER} <PASTE_HASH_BCRYPT>
-  }
-  reverse_proxy dokuwiki:80
-}
-```
-
-Ricarica:
-
-```bash
-docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
-```
-
-> Vuoi anche login “interno” alla wiki? Possiamo farlo, ma cambia a seconda dell’immagine (alcune supportano env iniziali, altre no). Basic Auth su Caddy è immediata e identica in locale/online.
+   ```
+   lib/plugins/<nome_plugin>/
+   ```
+3. Ricarica DokuWiki → lo vedrai nel pannello “Amministrazione”.
 
 ---
 
-# 7) Odoo – imposta master password e crea il DB automaticamente
+## 🧩 Caso alternativo: Wiki pubblica ma con admin nascosto
 
-### 7.1 Imposta **master password** senza aprire la UI
+Se vuoi mantenere il wiki **pubblico senza login per i visitatori**, ma **abilitare il pannello admin solo per te**, puoi impostare:
 
-Scrivi `~/.odoorc` nel container (Odoo la legge automaticamente):
-
-```bash
-docker compose exec -T odoo bash -lc '
-install -m 600 /dev/stdin /var/lib/odoo/.odoorc <<EOF
-[options]
-admin_passwd = '"$ODOO_MASTER_PASSWORD"'
-EOF
-'
-docker compose restart odoo
+```php
+$conf['useacl'] = 1;
+$conf['authtype'] = 'authplain';
+$conf['superuser'] = 'admin';
+$conf['openregister'] = 0;
+$conf['defaultgroup'] = 'user';
 ```
 
-### 7.2 Crea il database via HTTP (idempotente)
+e nei permessi ACL (`conf/acl.auth.php`) aggiungi:
 
-Se il DB non esiste, creiamolo con i campi che vedi nella pagina di setup:
-
-```bash
-# Se risponde 200/302/401/403, Odoo è su
-docker run --rm --network cloudetta_internal curlimages/curl -s -o /dev/null -w "%{http_code}\n" http://odoo:8069
-
-# Crea il DB solo se non esiste già
-docker run --rm --network cloudetta_internal curlimages/curl -s -X POST \
-  http://odoo:8069/web/database/create \
-  -H 'Content-Type: application/x-www-form-urlencoded' \
-  --data-urlencode "master_pwd=${ODOO_MASTER_PASSWORD}" \
-  --data-urlencode "name=${ODOO_DB}" \
-  --data-urlencode "lang=${ODOO_LANG:-en_US}" \
-  --data-urlencode "login=${ADMIN_EMAIL}" \
-  --data-urlencode "password=${ADMIN_PASS}" \
-  --data-urlencode "phone=" \
-  --data-urlencode "country_code=" \
-  --data-urlencode "demo=${ODOO_DEMO}"
+```
+*       @ALL    1
 ```
 
-Dopo: login su `http://odoo.localhost` con **${ADMIN_EMAIL}/${ADMIN_PASS}**.
-
-> Se vuoi, questo blocco si può aggiungere al **bootstrap** dopo il check HTTP di Odoo.
+così tutti possono leggere, ma solo l’admin può configurare.
 
 ---
 
-# 8) Riassunto URL + login (dopo i passi sopra)
-
-* **Redmine** → `http://redmine.localhost` → **admin / ${ADMIN_PASS}**
-* **Nextcloud** → `http://nextcloud.localhost` → **${NEXTCLOUD_ADMIN_USER} / ${NEXTCLOUD_ADMIN_PASS}**
-* **n8n** → `http://n8n.localhost` → **${ADMIN_USER} / ${ADMIN_PASS}** (sezione 5)
-* **Odoo** → `http://odoo.localhost` → **${ADMIN_EMAIL} / ${ADMIN_PASS}** (db `${ODOO_DB}`)
-* **Django admin** → `http://django.localhost/admin/` → **${DJANGO_ADMIN_USER} / ${DJANGO_ADMIN_PASS}**
-* **DokuWiki** → `http://wiki.localhost` → **Basic Auth ${ADMIN_USER} / ${ADMIN_PASS}** (sezione 6)
-
-In produzione:
-
-* Nextcloud e gli altri host saranno `https://<host.tuo.dominio>`.
-* Ricordati di includere il dominio prod in `TRUSTED_DOMAINS` (punto 3) e in Caddyfile.
-
----
-
-Se vuoi, posso darti **le patch pronte** per:
-
-* aggiungere al **bootstrap**: fix `trusted_domains` via `occ`, set password admin Redmine, creazione DB Odoo;
-* aggiornare `docker-compose.yml` per **n8n Basic Auth** e lo snippet **Caddyfile** per **wiki**.
+Vuoi che ti scriva **il contenuto completo dei file `conf/local.php`, `users.auth.php` e `acl.auth.php`** già pronti per attivare login e pannello admin in modo sicuro (con wiki pubblico in sola lettura)?
+Posso fornirti i tre file già pronti da copiare.
