@@ -5,11 +5,10 @@ set -euo pipefail
 # Cloudetta Bootstrap Installer
 # - Crea/aggiorna .env con credenziali base (mail incluse)
 # - Avvia (o riutilizza) docker compose
-# - Attende i servizi (n8n, Nextcloud, **Redmine-DB → init → Redmine-HTTP**, Django)
+# - Attende i servizi (n8n, Nextcloud, Redmine, Django)
 # - Crea admin Django e Nextcloud (best-effort)
 # - (Opzionale) Esegue install.sh per SEED DEMO Odoo senza avviare stack
 # - Inizializza DB Redmine (MariaDB) creando DB/utente/permessi se mancanti
-# - Imposta REDMINE_SECRET_KEY_BASE (via .env) e migra Redmine
 # - Genera automaticamente la API key di Redmine e la salva in .env
 # - Integra i workflow base n8n (ex integration/setup_api_links.sh)
 # Idempotente: puoi rilanciarlo in sicurezza.
@@ -55,37 +54,13 @@ wait_on_http () {
   echo "Timeout aspettando $url (ultimo codice: $code)"; return 1
 }
 
-# attesa MySQL/MariaDB per un servizio compose (es. redmine-db)
-wait_on_mysql () {
-  # $1 = service (es. redmine-db), $2 = root_pw, $3 tries, $4 sleep
-  local svc="$1"; local root_pw="$2"; local tries="${3:-60}"; local sleep_s="${4:-2}"
-  while [ "$tries" -gt 0 ]; do
-    if docker compose exec -T "$svc" mariadb -uroot -p"$root_pw" -e "SELECT 1" >/dev/null 2>&1; then
-      echo "[wait] $svc → OK (MySQL pronto)"
-      return 0
-    fi
-    echo "[wait] $svc → not ready (restano $tries)"
-    tries=$((tries-1)); sleep "$sleep_s"
-  done
-  echo "Timeout aspettando MySQL su $svc"; return 1
-}
-
-# util per appicare/aggiornare una variabile chiave nel .env (idempotente)
-upsert_env_var () {
-  local key="$1"; local val="$2"
-  if grep -qE "^${key}=" .env 2>/dev/null; then
-    sed -i.bak "s|^${key}=.*|${key}=${val}|" .env && rm -f .env.bak || true
-  else
-    printf "\n%s=%s\n" "$key" "$val" >> .env
-  fi
-}
-
 # === 1) Prepara .env a partire da .env.example se manca ======================
 if [ ! -f .env ]; then
   echo "[bootstrap] Creo .env da .env.example"
   cp -f .env.example .env || true
   # Aggiorna chiavi principali nel nuovo .env
   tmpfile=$(mktemp)
+  # NB: mantengo la tua logica originale; se vuoi una secret più robusta, posso metterla con openssl
   awk -v n8p="$N8N_PASSWORD" \
       -v mpv="$MAIL_PROVIDER" \
       -v mu="$MAIL_USER" \
@@ -103,18 +78,6 @@ if [ ! -f .env ]; then
   chmod 600 .env || true
 else
   echo "[bootstrap] Trovato .env esistente: non lo sovrascrivo"
-fi
-
-# === 1b) Assicura il secret di Redmine PRIMA del primo avvio =================
-# Se REDMINE_SECRET_KEY_BASE manca, generane uno robusto (128 hex)
-if ! grep -q '^REDMINE_SECRET_KEY_BASE=' .env 2>/dev/null; then
-  echo "[bootstrap] Genero REDMINE_SECRET_KEY_BASE…"
-  if command -v openssl >/dev/null 2>&1; then
-    RSKB="$(openssl rand -hex 64)"
-  else
-    RSKB="$(head -c 64 /dev/urandom | od -vAn -tx1 | tr -d ' \n')"
-  fi
-  upsert_env_var "REDMINE_SECRET_KEY_BASE" "$RSKB"
 fi
 
 # Esporta variabili
@@ -138,48 +101,36 @@ fi
 # risetta la rete ora che lo stack è partito
 CNET="$(detect_compose_net || true)"
 
-# === 3) Attesa servizi (ordine corretto con init Redmine) ====================
+# === 3) Attesa servizi ========================================================
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"
 REDMINE_URL="${REDMINE_URL:-http://redmine:3000}"
 NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://nextcloud:80}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
 
 echo "[bootstrap] Attendo servizi…"
-
-# 1) n8n e nextcloud prima (ok anche se 401/403/404)
 wait_on_http "$N8N_URL" 120 2 || true
 wait_on_http "$NEXTCLOUD_URL" 120 2 || true
-
-# 2) Redmine: attendo il DB, INIZIALIZZO DB/UTENTE/PERMESSI
-wait_on_mysql redmine-db "${REDMINE_ROOT_PW:-root}" 120 2 || true
-
-echo "[bootstrap] Inizializzo DB Redmine (MariaDB)…"
-docker compose exec -T redmine-db mariadb -uroot -p"${REDMINE_ROOT_PW:-root}" -e "
-  CREATE DATABASE IF NOT EXISTS redmine CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-  CREATE USER IF NOT EXISTS 'redmine'@'%' IDENTIFIED BY '${REDMINE_DB_PASSWORD}';
-  GRANT ALL PRIVILEGES ON redmine.* TO 'redmine'@'%';
-  FLUSH PRIVILEGES;
-" || echo "WARN: inizializzazione Redmine DB fallita (continua lo stesso)."
-
-# Riavvio/ricreo Redmine dopo che .env contiene REDMINE_SECRET_KEY_BASE
-echo "[bootstrap] Riavvio Redmine con SECRET da .env…"
-docker compose up -d --force-recreate --no-deps redmine || true
-
-# Migrazioni & dati default (idempotente)
-if docker compose exec -T redmine bash -lc 'command -v bundle >/dev/null 2>&1'; then
-  docker compose exec -T redmine bash -lc '
-    set -e
-    export RAILS_ENV=production
-    bundle exec rake db:migrate
-    bundle exec rake redmine:load_default_data REDMINE_LANG=it || true
-  ' || echo "WARN: migrazioni Redmine fallite (controlla log)"
-fi
-
-# attendo Redmine HTTP
 wait_on_http "$REDMINE_URL" 120 2 || true
-
-# 3) Django: endpoint certo
+# per django uso un endpoint certo:
 wait_on_http "${DJANGO_URL%/}/admin/login/" 120 2 || true
+
+# === 3b) Inizializza DB Redmine su MariaDB ===================================
+# Crea DB/utente/permessi se mancanti (idempotente)
+if docker compose ps -q redmine-db >/dev/null; then
+  echo "[bootstrap] Inizializzo DB Redmine (MariaDB)…"
+  docker compose exec -T redmine-db mariadb -uroot -p"${REDMINE_ROOT_PW:-root}" -e "
+    CREATE DATABASE IF NOT EXISTS redmine CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+    CREATE USER IF NOT EXISTS 'redmine'@'%' IDENTIFIED BY '${REDMINE_DB_PASSWORD}';
+    GRANT ALL PRIVILEGES ON redmine.* TO 'redmine'@'%';
+    FLUSH PRIVILEGES;
+  " || echo "WARN: inizializzazione Redmine DB fallita (continua lo stesso)."
+  # Dopo l'init, assicuro che redmine riparta
+  docker compose up -d redmine || true
+  # attendo che risponda
+  wait_on_http "$REDMINE_URL" 120 2 || true
+else
+  echo "WARN: redmine-db non presente o non avviato; salto init DB Redmine."
+fi
 
 # === 4) Configurazioni applicative ===========================================
 
@@ -264,8 +215,13 @@ REDMINE_API_KEY_GENERATED="$(echo "$REDMINE_KEY_OUTPUT" | sed -n 's/^API_KEY=//p
 
 if [ -n "${REDMINE_API_KEY_GENERATED}" ]; then
   echo "[bootstrap] API key Redmine ottenuta: ${REDMINE_API_KEY_GENERATED:0:6}********"
-  upsert_env_var "REDMINE_API_KEY" "$REDMINE_API_KEY_GENERATED"
+  if grep -q '^REDMINE_API_KEY=' .env; then
+    sed -i.bak "s/^REDMINE_API_KEY=.*/REDMINE_API_KEY=${REDMINE_API_KEY_GENERATED}/" .env
+  else
+    printf "\nREDMINE_API_KEY=%s\n" "$REDMINE_API_KEY_GENERATED" >> .env
+  fi
   export REDMINE_API_KEY="$REDMINE_API_KEY_GENERATED"
+  [ -f .env.bak ] && rm -f .env.bak || true
 else
   echo "[bootstrap] ATTENZIONE: impossibile ottenere la API key di Redmine in automatico."
   echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."

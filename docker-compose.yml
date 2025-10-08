@@ -99,7 +99,10 @@ services:
       - redmine-db
     environment:
       REDMINE_DB_MYSQL: redmine-db
+      REDMINE_DB_DATABASE: redmine
+      REDMINE_DB_USERNAME: redmine
       REDMINE_DB_PASSWORD: ${REDMINE_DB_PASSWORD}
+      REDMINE_SECRET_KEY_BASE: ${REDMINE_SECRET_KEY_BASE}
     volumes:
       - redmine-data:/usr/src/redmine/files
     networks:
