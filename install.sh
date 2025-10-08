@@ -17,6 +17,12 @@ if [ -f ".env" ]; then
   set +a
 fi
 
+# Rete docker-compose (per risolvere i nomi dei servizi tipo "odoo")
+detect_compose_net() {
+  docker network ls --format '{{.Name}}' | grep -E '_internal$' | head -n1
+}
+CNET="$(detect_compose_net || true)"
+
 # Crea directory solo se serve
 if [ "${SKIP_COMPOSE:-}" != "1" ]; then
   echo "[*] Creating data directories…"
@@ -35,11 +41,12 @@ if [ "${SKIP_COMPOSE:-}" != "1" ]; then
   docker compose up -d
 
   echo "[*] Running Django migrations + superuser (admin/admin)"
-  docker exec -it django python manage.py migrate
-  echo "from django.contrib.auth import get_user_model; User=get_user_model(); User.objects.filter(username='admin').exists() or User.objects.create_superuser('admin','admin@example.com','admin')" | docker exec -i django python manage.py shell
+  docker compose exec -T django python manage.py migrate
+  echo "from django.contrib.auth import get_user_model; User=get_user_model(); User.objects.filter(username='admin').exists() or User.objects.create_superuser('admin','admin@example.com','admin')" \
+    | docker compose exec -T django python manage.py shell
 
   echo "[*] Collecting static…"
-  docker exec -it django python manage.py collectstatic --noinput
+  docker compose exec -T django python manage.py collectstatic --noinput
 else
   echo "[*] SKIP_COMPOSE=1 → non avvio stack né eseguo step Django."
 fi
@@ -51,7 +58,7 @@ ODOO_URL="${ODOO_URL:-http://odoo:8069}"
 wait_on_http () {
   local url="$1"; local tries="${2:-60}"; local sleep_s="${3:-2}"
   while [ "$tries" -gt 0 ]; do
-    code=$(docker run --rm --network host curlimages/curl -s -o /dev/null -w "%{http_code}" "$url" || true)
+    code=$(docker run --rm --network "${CNET:-bridge}" curlimages/curl -s -o /dev/null -w "%{http_code}" "$url" || true)
     if echo "$code" | grep -qE '^(200|302|401|403)$'; then return 0; fi
     tries=$((tries-1)); sleep "$sleep_s"
   done
@@ -75,6 +82,7 @@ run_odoo_demo () {
   if ! docker compose exec -T odoo bash -lc "[ -f '$CONTAINER_DEMO' ]"; then
     if [ -f "$HOST_DEMO" ]; then
       echo "[*] Copy demo_setup.py into container…"
+      docker compose exec -T odoo bash -lc "mkdir -p '$(dirname "$CONTAINER_DEMO")'"
       docker cp "$HOST_DEMO" "$(docker compose ps -q odoo):$CONTAINER_DEMO"
     else
       echo "[!] demo_setup.py non trovato né nel container né nell'host ($HOST_DEMO)."
@@ -85,10 +93,16 @@ run_odoo_demo () {
 
   # Esegui lo script demo con le credenziali Odoo disponibili in env
   docker compose exec -T odoo bash -lc "
-    export ODOO_USER='${ODOO_USER}';
-    export ODOO_PASS='${ODOO_PASS}';
-    export ODOO_URL='${ODOO_URL}';
-    python -u '$CONTAINER_DEMO'
+    set -e
+    export ODOO_USER='${ODOO_USER}'
+    export ODOO_PASS='${ODOO_PASS}'
+    export ODOO_URL='${ODOO_URL}'
+    PY=\$(command -v python3 || command -v python || true)
+    if [ -z \"\$PY\" ]; then
+      echo '[!] python non trovato nel container Odoo' >&2
+      exit 1
+    fi
+    \"\$PY\" -u '$CONTAINER_DEMO'
   " || echo '[!] Odoo demo setup ha restituito un errore (continuo).'
 }
 

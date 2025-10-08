@@ -14,9 +14,6 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    environment:
-      - ADMIN_USER=${ADMIN_USER}
-      - WIKI_BCRYPT_HASH=${WIKI_BCRYPT_HASH}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -39,10 +36,6 @@ services:
       - DATABASE_URL=postgres://django:${DJANGO_DB_PASSWORD}@django-db:5432/django
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_xxx}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_xxx}
-      # admin unificato (usato dal bootstrap)
-      - DJANGO_ADMIN_USER=${DJANGO_ADMIN_USER}
-      - DJANGO_ADMIN_EMAIL=${DJANGO_ADMIN_EMAIL}
-      - DJANGO_ADMIN_PASS=${DJANGO_ADMIN_PASS}
     volumes:
       - ./django:/app
     ports:
@@ -72,11 +65,6 @@ services:
       - HOST=odoo-db
       - USER=odoo
       - PASSWORD=${ODOO_DB_PASSWORD}
-      # opzionale: Odoo user/pass/email unificati usati dal bootstrap per creare il DB
-      - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - ADMIN_PASS=${ADMIN_PASS}
-      - ODOO_DB=${ODOO_DB}
-      - ODOO_LANG=${ODOO_LANG}
     volumes:
       - odoo-data:/var/lib/odoo
       - ./odoo-addons:/mnt/extra-addons
@@ -143,9 +131,6 @@ services:
       - MYSQL_DATABASE=nextcloud
       - MYSQL_USER=nextcloud
       - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
-      # admin unificato usato dal bootstrap all'install
-      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
-      - NEXTCLOUD_ADMIN_PASS=${NEXTCLOUD_ADMIN_PASS}
     volumes:
       - nextcloud-data:/var/www/html
     networks:
@@ -170,8 +155,8 @@ services:
     environment:
       - GENERIC_TIMEZONE=Europe/Rome
       - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${ADMIN_USER}
-      - N8N_BASIC_AUTH_PASSWORD=${ADMIN_PASS}
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
     ports:
       - "5678:5678"
     volumes:
