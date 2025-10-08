@@ -111,3 +111,31 @@ così tutti possono leggere, ma solo l’admin può configurare.
 
 Vuoi che ti scriva **il contenuto completo dei file `conf/local.php`, `users.auth.php` e `acl.auth.php`** già pronti per attivare login e pannello admin in modo sicuro (con wiki pubblico in sola lettura)?
 Posso fornirti i tre file già pronti da copiare.
+
+
+
+
+
+
+# Problemi su django frontend/amministrazione senza stili bisonga capire come integrare stripe a me sembra un contenitore vuoto invece dovrebbe avere i metodi per gestire stripe
+
+La risorsa da “http://django.localhost/static/admin/css/dark_mode.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+La risorsa da “http://django.localhost/static/admin/css/base.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+La risorsa da “http://django.localhost/static/admin/css/nav_sidebar.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+La risorsa da “http://django.localhost/static/admin/js/theme.js” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+Caricamento non riuscito per lo <script> con sorgente “http://django.localhost/static/admin/js/theme.js”. admin:9:43
+La risorsa da “http://django.localhost/static/admin/js/nav_sidebar.js” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+Caricamento non riuscito per lo <script> con sorgente “http://django.localhost/static/admin/js/nav_sidebar.js”. admin:13:55
+La risorsa da “http://django.localhost/static/admin/css/dashboard.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+La risorsa da “http://django.localhost/static/admin/css/responsive.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+La risorsa da “http://django.localhost/static/admin/css/nav_sidebar.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
+admin
+
+​
