@@ -1,36 +1,34 @@
 {
-  email admin@example.com
+  # Niente TLS in locale per *.localhost
+  auto_https off
 }
 
 # ---------- Django ----------
-django.localhost, django.example.com {
+http://django.localhost {
   reverse_proxy django:8000
 }
 
 # ---------- Odoo ----------
-odoo.localhost, odoo.example.com {
+http://odoo.localhost {
   reverse_proxy odoo:8069
 }
 
 # ---------- Redmine ----------
-redmine.localhost, redmine.example.com {
+http://redmine.localhost {
   reverse_proxy redmine:3000
 }
 
-# ---------- DokuWiki (protetto da Basic Auth unificata) ----------
-wiki.localhost, wiki.example.com {
-  basicauth /* {
-    {$ADMIN_USER} {$WIKI_BCRYPT_HASH}
-  }
+# ---------- DokuWiki (senza auth in locale) ----------
+http://wiki.localhost {
   reverse_proxy dokuwiki:80
 }
 
 # ---------- Nextcloud ----------
-nextcloud.localhost, nextcloud.example.com {
+http://nextcloud.localhost {
   reverse_proxy nextcloud:80
 }
 
 # ---------- n8n ----------
-n8n.localhost, n8n.example.com {
+http://n8n.localhost {
   reverse_proxy n8n:5678
 }

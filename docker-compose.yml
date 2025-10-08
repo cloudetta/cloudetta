@@ -14,13 +14,14 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    environment:
-      - ADMIN_USER=${ADMIN_USER}
-      - WIKI_BCRYPT_HASH=${WIKI_BCRYPT_HASH}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    environment:
+      - ADMIN_USER=${ADMIN_USER}
+      - WIKI_BCRYPT_HASH=${WIKI_BCRYPT_HASH}
+      - CADDY_EMAIL=${CADDY_EMAIL:-admin@example.com}
     networks:
       - web
       - internal
