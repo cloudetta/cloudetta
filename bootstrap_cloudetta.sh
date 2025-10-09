@@ -6,7 +6,7 @@ set -euo pipefail
 # - Prepara/aggiorna .env (crea anche ADMIN_* unificati)
 # - Genera/aggiorna automaticamente caddy/Caddyfile (locale+server)
 # - Avvia/riutilizza docker compose
-# - Attende servizi, configura: Nextcloud, Django, Redmine, Odoo
+# - Attende servizi, configura: Nextcloud, Django, Redmine, Odoo, Mautic
 # - Crea integrazioni n8n
 # - Stampa riepilogo credenziali/URL
 # Idempotente
@@ -113,8 +113,13 @@ grep -q '^ODOO_DEMO=' .env || upsert_env_var "ODOO_DEMO" "true"
 grep -q '^ODOO_LANG=' .env || upsert_env_var "ODOO_LANG" "it_IT"
 grep -q '^CADDY_EMAIL=' .env || upsert_env_var "CADDY_EMAIL" "admin@example.com"
 
+# Nuove variabili facoltative per Mautic (default sicuri)
+grep -q '^MAUTIC_DOMAIN=' .env || upsert_env_var "MAUTIC_DOMAIN" ""
+grep -q '^MAUTIC_DB_PASSWORD=' .env || upsert_env_var "MAUTIC_DB_PASSWORD" "dev_mautic_db_pw"
+grep -q '^MAUTIC_ROOT_PW=' .env || upsert_env_var "MAUTIC_ROOT_PW" "dev_mautic_root_pw"
+
 # Domini pubblici (facoltativi – se li metti abiliti https prod)
-for v in DJANGO_DOMAIN ODOO_DOMAIN REDMINE_DOMAIN NEXTCLOUD_DOMAIN N8N_DOMAIN WIKI_DOMAIN; do
+for v in DJANGO_DOMAIN ODOO_DOMAIN REDMINE_DOMAIN NEXTCLOUD_DOMAIN N8N_DOMAIN WIKI_DOMAIN MAUTIC_DOMAIN; do
   grep -q "^${v}=" .env || upsert_env_var "$v" ""
 done
 
@@ -143,22 +148,21 @@ http://wiki.localhost {
 }
 http://nextcloud.localhost { reverse_proxy nextcloud:80 }
 http://n8n.localhost       { reverse_proxy n8n:5678 }
+http://mautic.localhost    { reverse_proxy mautic:80 }
 LOCAL
 
 # blocchi PRODUZIONE (https automatico) – solo se hai valorizzato i domini
 [ -n "${DJANGO_DOMAIN:-}" ]    && echo "${DJANGO_DOMAIN} { reverse_proxy django:8000 }"
 [ -n "${ODOO_DOMAIN:-}" ]      && echo "${ODOO_DOMAIN} { reverse_proxy odoo:8069 }"
 [ -n "${REDMINE_DOMAIN:-}" ]   && echo "${REDMINE_DOMAIN} { reverse_proxy redmine:3000 }"
-[ -n "${WIKI_DOMAIN:-}" ]      && cat <<'WIKI'
-WIKI
-[ -n "${WIKI_DOMAIN:-}" ] && echo "${WIKI_DOMAIN} { basicauth /* { {$ADMIN_USER} {$WIKI_BCRYPT_HASH} } reverse_proxy dokuwiki:80 }"
+[ -n "${WIKI_DOMAIN:-}" ]      && echo "${WIKI_DOMAIN} { basicauth /* { {\$ADMIN_USER} {\$WIKI_BCRYPT_HASH} } reverse_proxy dokuwiki:80 }"
 [ -n "${NEXTCLOUD_DOMAIN:-}" ] && echo "${NEXTCLOUD_DOMAIN} { reverse_proxy nextcloud:80 }"
 [ -n "${N8N_DOMAIN:-}" ]       && echo "${N8N_DOMAIN} { reverse_proxy n8n:5678 }"
+[ -n "${MAUTIC_DOMAIN:-}" ]    && echo "${MAUTIC_DOMAIN} { reverse_proxy mautic:80 }"
 } > caddy/Caddyfile
 
 # Se manca l'hash per il wiki e vuoi proteggerlo in prod, puoi generarlo così:
 if [ -z "${WIKI_BCRYPT_HASH:-}" ]; then
-  # niente errore se non hai caddy locale: lo lasci vuoto e puoi generarlo dopo
   HASH="$(docker run --rm caddy caddy hash-password --plaintext "${ADMIN_PASS}" 2>/dev/null || true)"
   [ -n "$HASH" ] && upsert_env_var "WIKI_BCRYPT_HASH" "$HASH" && export WIKI_BCRYPT_HASH="$HASH"
 fi
@@ -185,6 +189,7 @@ REDMINE_URL="${REDMINE_URL:-http://redmine:3000}"
 NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://nextcloud:80}"
 ODOO_URL="${ODOO_URL:-http://odoo:8069}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
+MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
 
 echo "[bootstrap] Attendo servizi…"
 wait_on_http "$N8N_URL" 120 2 || true
@@ -292,6 +297,55 @@ if ! echo "$EXISTS" | grep -q "\"${ODOO_DB}\""; then
     --data-urlencode "demo=${ODOO_DEMO}" >/dev/null || true
 fi
 
+# --------- 6bis) Mautic: installazione/sync admin (idempotente) -------------
+echo "[bootstrap] Configuro Mautic…"
+wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
+wait_on_http "$MAUTIC_URL" 180 2 || true
+
+docker compose exec -T mautic bash -lc '
+set -e
+PHP=php
+cd /var/www/html
+
+# prova a capire se è già installato: local.php esiste su Mautic <=4; su v5 la CLI risponde comunque
+if [ ! -f app/config/local.php ] && [ ! -f config/local.php ]; then
+  echo "Mautic non installato: tento installazione via CLI…"
+  # Provo il comando di installazione non interattivo (se disponibile)
+  if $PHP bin/console list | grep -q "mautic:install"; then
+    $PHP bin/console mautic:install -n \
+      --db_driver=pdo_mysql \
+      --db_host="${MAUTIC_DB_HOST:-mautic-db}" \
+      --db_name="${MAUTIC_DB_NAME:-mautic}" \
+      --db_user="${MAUTIC_DB_USER:-mautic}" \
+      --db_password="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
+      --db_port="${MAUTIC_DB_PORT:-3306}" \
+      --admin_username="${ADMIN_USER:-admin}" \
+      --admin_password="${ADMIN_PASS:-ChangeMe!123}" \
+      --admin_email="${ADMIN_EMAIL:-admin@example.com}" \
+      --site_url="${MAUTIC_DOMAIN:+https://$MAUTIC_DOMAIN}"
+  else
+    echo "CLI install non disponibile; proseguirò con sync utente/admin dopo migrazioni."
+  fi
+fi
+
+# Assicura migrazioni DB
+if $PHP bin/console list | grep -q "doctrine:migrations:migrate"; then
+  $PHP bin/console doctrine:migrations:migrate -n || true
+fi
+
+# Crea/aggiorna utente admin
+if $PHP bin/console list | grep -q "mautic:user:create"; then
+  # prova update, altrimenti crea
+  $PHP bin/console mautic:user:update -u "${ADMIN_USER:-admin}" --password "${ADMIN_PASS:-ChangeMe!123}" --email "${ADMIN_EMAIL:-admin@example.com}" 2>/dev/null || \
+  $PHP bin/console mautic:user:create -u "${ADMIN_USER:-admin}" -p "${ADMIN_PASS:-ChangeMe!123}" -e "${ADMIN_EMAIL:-admin@example.com}" --role="Administrator" || true
+fi
+
+# Configura site_url se MAUTIC_DOMAIN è presente
+if [ -n "${MAUTIC_DOMAIN:-}" ] && $PHP bin/console list | grep -q "mautic:config:set"; then
+  $PHP bin/console mautic:config:set --name="site_url" --value="https://${MAUTIC_DOMAIN}" || true
+fi
+' || echo "WARN: configurazione Mautic non completamente automatizzabile (verifica via UI)."
+
 # --------- 7) Redmine: sync admin + API key ---------------------------------
 echo "[bootstrap] Imposto password/email admin Redmine…"
 docker compose exec -T redmine bash -lc '
@@ -367,6 +421,7 @@ Accessi locali (sviluppo):
 - Nextcloud  → http://nextcloud.localhost
 - n8n        → http://n8n.localhost
 - DokuWiki   → http://wiki.localhost
+- Mautic     → http://mautic.localhost
 
 Accessi pubblici (se configurati in .env):
 - DJANGO_DOMAIN=${DJANGO_DOMAIN:-<non impostato>}
@@ -375,11 +430,16 @@ Accessi pubblici (se configurati in .env):
 - NEXTCLOUD_DOMAIN=${NEXTCLOUD_DOMAIN:-<non impostato>}
 - N8N_DOMAIN=${N8N_DOMAIN:-<non impostato>}
 - WIKI_DOMAIN=${WIKI_DOMAIN:-<non impostato>}
+- MAUTIC_DOMAIN=${MAUTIC_DOMAIN:-<non impostato>}
 
 Nextcloud:
 - trusted_domains = ${TRUSTED_DOMAINS} ${NEXTCLOUD_DOMAIN:+, $NEXTCLOUD_DOMAIN}
 
 Redmine:
 - API key salvata in .env → REDMINE_API_KEY=${REDMINE_API_KEY:-<n.d.>}
+
+Mautic:
+- DB: mautic@mautic-db (pw=${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw})
+- Admin: ${ADMIN_USER} / ${ADMIN_PASS}  (${ADMIN_EMAIL})
 
 INFO

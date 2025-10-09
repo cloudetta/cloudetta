@@ -191,6 +191,46 @@ services:
     networks:
       - internal
 
+  # ---------- Mautic (aggiunta) ----------
+  mautic:
+    image: mautic/mautic:v5
+    container_name: mautic
+    depends_on:
+      - mautic-db
+    environment:
+      # DB (con default sicuro se non presente in .env)
+      - MAUTIC_DB_HOST=mautic-db
+      - MAUTIC_DB_NAME=mautic
+      - MAUTIC_DB_USER=mautic
+      - MAUTIC_DB_PASSWORD=${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}
+      - MAUTIC_DB_PORT=3306
+      # setup/compat
+      - MAUTIC_RUN_MIGRATIONS=true
+      - MAUTIC_TRUSTED_PROXIES=*
+      - MAUTIC_TRUSTED_HOSTS=mautic,mautic.localhost,${MAUTIC_DOMAIN}
+      - PHP_INI_DATE_TIMEZONE=Europe/Rome
+      # admin unificato (usato dal bootstrap per install/update)
+      - ADMIN_USER=${ADMIN_USER}
+      - ADMIN_EMAIL=${ADMIN_EMAIL}
+      - ADMIN_PASS=${ADMIN_PASS}
+    volumes:
+      - mautic-data:/var/www/html
+    networks:
+      - internal
+
+  mautic-db:
+    image: mariadb:10.6
+    container_name: mautic-db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MAUTIC_ROOT_PW:-dev_mautic_root_pw}
+      - MYSQL_DATABASE=mautic
+      - MYSQL_USER=mautic
+      - MYSQL_PASSWORD=${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}
+    volumes:
+      - mautic-db-data:/var/lib/mysql
+    networks:
+      - internal
+
   mail:
     image: bytemark/smtp
     container_name: mail
@@ -215,6 +255,8 @@ services:
       - nextcloud-db-data:/nextcloud-db-data
       - dokuwiki-data:/dokuwiki-data
       - n8n-data:/n8n-data
+      - mautic-data:/mautic-data
+      - mautic-db-data:/mautic-db-data
       - ./backups:/backups
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backup/backup.sh:/backup/backup.sh:ro
@@ -235,3 +277,5 @@ volumes:
   nextcloud-db-data:
   n8n-data:
   dokuwiki-data:
+  mautic-data:
+  mautic-db-data:
