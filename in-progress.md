@@ -116,6 +116,10 @@ Posso fornirti i tre file già pronti da copiare.
 
 # Mautic con integrazione con odoo (i lead in automatico su mautic su creazione contatto)
 
+fare in modo di non dover configurare db e password e nome utente email e password (deve usare quelli del file .env) ogni volta che si fa il bootstrap
+
+fare in modo di avere già configurato il smtp di yahoo per invio email 
+
 
 
 # dismetto django credo sia inutile per me
