@@ -1,4 +1,4 @@
-## 🧨 Istruzioni per distruggere tutto e ripartire pulito (fuori dallo script)
+## 🧨 Istruzioni per distruggere tutto e ripartire pulito
 
 Da **dentro** `~/progetti/cloudetta`:
 
@@ -14,22 +14,18 @@ docker compose down --volumes --remove-orphans
 docker network rm cloudetta_internal cloudetta_web 2>/dev/null || true
 ```
 
-3. **(Opzionale) Pulisci volumi residui del progetto**
-   (se qualcosa fosse rimasto per qualsiasi motivo)
-
-```bash
-docker volume ls --format '{{.Name}}' | grep '^cloudetta_' | xargs -r docker volume rm
-```
 
 4. **(Opzionale) Prune generale di Docker**
    (attenzione: elimina risorse inutilizzate anche di altri progetti)
 
 ```bash
 docker system prune -a --volumes -f
+cd ..
+rm -rf cloudetta
 ```
 
 4.1. copia i file se modificati
-
+4.2. assicurati che i file abbiano LF come terminatore di linea (non CRLF) e siano eseguibili
 poi 
 ```bash
 sed -i 's/\r$//' .env
@@ -50,19 +46,39 @@ chmod +x install.sh
 
 Se vuoi, posso anche aggiungere al bootstrap un flag tipo `CLEAN=1` per attivare una pulizia totale opzionale prima dell’up, ma ora ho fatto esattamente quanto chiesto: **ordine corretto** per Redmine nello script e **istruzioni separate** per ripartire pulito.
 
+Sì, quel Caddyfile va benissimo per l’uso **solo locale**. È sintatticamente corretto (blocchi multi-linea) e mappa ogni `*.localhost` al rispettivo servizio nella rete docker.
 
-# Caddy in ascolto?
-docker ps --format "table {{.Names}}\t{{.Ports}}" | grep caddy
+Mini check-list per applicarlo al volo:
 
-# test reverse proxy
+1. **Validalo** fuori container (giusto scrupolo):
+
+```bash
+docker run --rm -v "$PWD/caddy:/caddy:ro" caddy:2 \
+  caddy validate --config /caddy/Caddyfile
+```
+
+2. **Ricarica Caddy** (senza restart dello stack):
+
+```bash
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+# se fallisse:
+docker compose restart caddy
+```
+
+3. **Smoke test**:
+
+```bash
 curl -I http://django.localhost
-curl -I http://odoo.localhost/web/login
+curl -I http://odoo.localhost
 curl -I http://redmine.localhost
-curl -I http://nextcloud.localhost
-curl -I http://n8n.localhost
 curl -I http://wiki.localhost
+curl -I http://nextcloud.localhost
+curl -I http://mautic.localhost
+curl -I http://n8n.localhost
+```
 
+Note rapide:
 
-ADMIN_USER=admin
-ADMIN_PASS=ChangeMe!123
-ADMIN_EMAIL=admin@example.com
+* I nomi `django`, `odoo`, `redmine`, `dokuwiki`, `nextcloud`, `mautic`, `n8n` devono corrispondere esattamente ai **service name** del `docker-compose.yml` (così Caddy li risolve sulla network compose).
+* In locale è ok **senza TLS** (`auto_https off`).
+* Se in futuro abiliti domini pubblici/https, aggiungeremo blocchi separati con i FQDN.

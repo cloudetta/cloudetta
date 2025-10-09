@@ -191,28 +191,19 @@ services:
     networks:
       - internal
 
-  # ---------- Mautic (aggiunta) ----------
+  # ---------- MAUTIC ----------
   mautic:
-    image: mautic/mautic:v5
+    image: mautic/mautic:5-apache
     container_name: mautic
     depends_on:
       - mautic-db
     environment:
-      # DB (con default sicuro se non presente in .env)
       - MAUTIC_DB_HOST=mautic-db
-      - MAUTIC_DB_NAME=mautic
       - MAUTIC_DB_USER=mautic
-      - MAUTIC_DB_PASSWORD=${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}
-      - MAUTIC_DB_PORT=3306
-      # setup/compat
-      - MAUTIC_RUN_MIGRATIONS=true
-      - MAUTIC_TRUSTED_PROXIES=*
-      - MAUTIC_TRUSTED_HOSTS=mautic,mautic.localhost,${MAUTIC_DOMAIN}
-      - PHP_INI_DATE_TIMEZONE=Europe/Rome
-      # admin unificato (usato dal bootstrap per install/update)
-      - ADMIN_USER=${ADMIN_USER}
-      - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - ADMIN_PASS=${ADMIN_PASS}
+      - MAUTIC_DB_PASSWORD=${MAUTIC_DB_PASSWORD}
+      - MAUTIC_DB_NAME=mautic
+      # opzionale: per URL pubblico se usi dominio
+      - MAUTIC_DOMAIN=${MAUTIC_DOMAIN}
     volumes:
       - mautic-data:/var/www/html
     networks:
@@ -222,10 +213,10 @@ services:
     image: mariadb:10.6
     container_name: mautic-db
     environment:
-      - MYSQL_ROOT_PASSWORD=${MAUTIC_ROOT_PW:-dev_mautic_root_pw}
+      - MYSQL_ROOT_PASSWORD=${MAUTIC_ROOT_PW}
       - MYSQL_DATABASE=mautic
       - MYSQL_USER=mautic
-      - MYSQL_PASSWORD=${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}
+      - MYSQL_PASSWORD=${MAUTIC_DB_PASSWORD}
     volumes:
       - mautic-db-data:/var/lib/mysql
     networks:

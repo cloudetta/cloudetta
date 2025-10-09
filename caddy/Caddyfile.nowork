@@ -1,0 +1,83 @@
+{
+  # in locale: niente HTTPS automatico
+  auto_https off
+  # email ACME quando abiliti domini in produzione
+  email {$ACME_EMAIL:admin@example.com}
+}
+
+############################################
+# LOCALHOST (sempre attivi in HTTP)
+############################################
+
+http://django.localhost {
+  reverse_proxy django:8000
+}
+
+http://odoo.localhost {
+  reverse_proxy odoo:8069
+}
+
+http://redmine.localhost {
+  reverse_proxy redmine:3000
+}
+
+http://wiki.localhost {
+  # basic_auth disabilitata in locale; se vuoi abilitarla, togli il commento e
+  # assicurati che le variabili siano valorizzate
+  # basic_auth /* {
+  #   {$ADMIN_USER} {$WIKI_BCRYPT_HASH}
+  # }
+  reverse_proxy dokuwiki:80
+}
+
+http://nextcloud.localhost {
+  reverse_proxy nextcloud:80
+}
+
+http://n8n.localhost {
+  reverse_proxy n8n:5678
+}
+
+http://mautic.localhost {
+  reverse_proxy mautic:80
+}
+
+############################################
+# PRODUZIONE (https automatico)
+# Questi blocchi vengono creati da Caddy solo se le variabili sono NON VUOTE
+############################################
+
+{$DJANGO_DOMAIN} {
+  @set host {$DJANGO_DOMAIN}
+  reverse_proxy django:8000
+}
+
+{$ODOO_DOMAIN} {
+  @set host {$ODOO_DOMAIN}
+  reverse_proxy odoo:8069
+}
+
+{$REDMINE_DOMAIN} {
+  @set host {$REDMINE_DOMAIN}
+  reverse_proxy redmine:3000
+}
+
+{$WIKI_DOMAIN} {
+  # in produzione proteggo il wiki se le variabili sono presenti
+  basic_auth /* {
+    {$ADMIN_USER} {$WIKI_BCRYPT_HASH}
+  }
+  reverse_proxy dokuwiki:80
+}
+
+{$NEXTCLOUD_DOMAIN} {
+  reverse_proxy nextcloud:80
+}
+
+{$N8N_DOMAIN} {
+  reverse_proxy n8n:5678
+}
+
+{$MAUTIC_DOMAIN} {
+  reverse_proxy mautic:80
+}

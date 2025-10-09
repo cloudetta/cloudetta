@@ -1,114 +1,39 @@
 {
-  # email usata per Let's Encrypt in produzione
-  email {$ACME_EMAIL:admin@example.com}
+  # niente TLS in locale per *.localhost
+  auto_https off
 }
 
-############################################
-# DJANGO
-############################################
-
-# Locale: solo HTTP su *.localhost
+# ---------- Django ----------
 http://django.localhost {
   reverse_proxy django:8000
 }
 
-# Produzione: HTTPS automatico se imposti DJANGO_DOMAIN
-{$DJANGO_DOMAIN:django.disabled.local} {
-  reverse_proxy django:8000
-}
-
-############################################
-# ODOO
-############################################
-
-# Locale
+# ---------- Odoo ----------
 http://odoo.localhost {
   reverse_proxy odoo:8069
 }
 
-# Produzione
-{$ODOO_DOMAIN:odoo.disabled.local} {
-  reverse_proxy odoo:8069
-}
-
-############################################
-# REDMINE
-############################################
-
-# Locale
+# ---------- Redmine ----------
 http://redmine.localhost {
   reverse_proxy redmine:3000
 }
 
-# Produzione
-{$REDMINE_DOMAIN:redmine.disabled.local} {
-  reverse_proxy redmine:3000
-}
-
-############################################
-# DOKUWIKI (protetto da Basic Auth)
-############################################
-# Variabili:
-#   ADMIN_USER        -> utente basic auth (default: admin)
-#   WIKI_BCRYPT_HASH  -> hash bcrypt della password (default: "ChangeMe!123")
-#
-# Per generare un nuovo hash:
-#   docker run --rm caddy caddy hash-password --plaintext 'LaTuaPassword'
-#
-# Locale
+# ---------- DokuWiki ----------
 http://wiki.localhost {
-  basic_auth /* {
-    {$ADMIN_USER:admin} {$WIKI_BCRYPT_HASH:$2a$10$0o7u2o0q2mQ0m4mD7b8ySe3kM8J9R3FQY8dH9y8b6wq2pVwXbJg2W} # "ChangeMe!123"
-  }
   reverse_proxy dokuwiki:80
 }
 
-# Produzione
-{$WIKI_DOMAIN:wiki.disabled.local} {
-  basic_auth /* {
-    {$ADMIN_USER:admin} {$WIKI_BCRYPT_HASH:$2a$10$0o7u2o0q2mQ0m4mD7b8ySe3kM8J9R3FQY8dH9y8b6wq2pVwXbJg2W}
-  }
-  reverse_proxy dokuwiki:80
-}
-
-############################################
-# NEXTCLOUD
-############################################
-
-# Locale
+# ---------- Nextcloud ----------
 http://nextcloud.localhost {
   reverse_proxy nextcloud:80
 }
 
-# Produzione
-{$NEXTCLOUD_DOMAIN:nextcloud.disabled.local} {
-  reverse_proxy nextcloud:80
-}
-
-############################################
-# n8n
-############################################
-
-# Locale
-http://n8n.localhost {
-  reverse_proxy n8n:5678
-}
-
-# Produzione
-{$N8N_DOMAIN:n8n.disabled.local} {
-  reverse_proxy n8n:5678
-}
-
-############################################
-# MAUTIC (aggiunta)
-############################################
-
-# Locale
+# ---------- Mautic ----------
 http://mautic.localhost {
   reverse_proxy mautic:80
 }
 
-# Produzione
-{$MAUTIC_DOMAIN:mautic.disabled.local} {
-  reverse_proxy mautic:80
+# ---------- n8n ----------
+http://n8n.localhost {
+  reverse_proxy n8n:5678
 }
