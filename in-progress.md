@@ -114,9 +114,11 @@ Posso fornirti i tre file già pronti da copiare.
 
 
 
+# Mautic con integrazione con odoo (i lead in automatico su mautic su creazione contatto)
 
 
 
+# dismetto django credo sia inutile per me
 # Problemi su django frontend/amministrazione senza stili bisonga capire come integrare stripe a me sembra un contenitore vuoto invece dovrebbe avere i metodi per gestire stripe
 
 La risorsa da “http://django.localhost/static/admin/css/dark_mode.css” è stata bloccata a causa della mancata corrispondenza (“text/html”) del tipo MIME (X-Content-Type-Options: nosniff).
