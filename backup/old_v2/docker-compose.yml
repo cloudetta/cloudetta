@@ -191,37 +191,6 @@ services:
     networks:
       - internal
 
-  # ---------- MAUTIC ----------
-  mautic:
-    image: mautic/mautic:5-apache
-    container_name: mautic
-    depends_on:
-      - mautic-db
-    environment:
-      - MAUTIC_DB_HOST=mautic-db
-      - MAUTIC_DB_USER=mautic
-      - MAUTIC_DB_PASSWORD=${MAUTIC_DB_PASSWORD}
-      - MAUTIC_DB_NAME=mautic
-      # opzionale: per URL pubblico se usi dominio
-      - MAUTIC_DOMAIN=${MAUTIC_DOMAIN}
-    volumes:
-      - mautic-data:/var/www/html
-    networks:
-      - internal
-
-  mautic-db:
-    image: mariadb:10.6
-    container_name: mautic-db
-    environment:
-      - MYSQL_ROOT_PASSWORD=${MAUTIC_ROOT_PW}
-      - MYSQL_DATABASE=mautic
-      - MYSQL_USER=mautic
-      - MYSQL_PASSWORD=${MAUTIC_DB_PASSWORD}
-    volumes:
-      - mautic-db-data:/var/lib/mysql
-    networks:
-      - internal
-
   mail:
     image: bytemark/smtp
     container_name: mail
@@ -246,8 +215,6 @@ services:
       - nextcloud-db-data:/nextcloud-db-data
       - dokuwiki-data:/dokuwiki-data
       - n8n-data:/n8n-data
-      - mautic-data:/mautic-data
-      - mautic-db-data:/mautic-db-data
       - ./backups:/backups
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backup/backup.sh:/backup/backup.sh:ro
@@ -268,5 +235,3 @@ volumes:
   nextcloud-db-data:
   n8n-data:
   dokuwiki-data:
-  mautic-data:
-  mautic-db-data:

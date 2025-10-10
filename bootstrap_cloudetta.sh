@@ -135,6 +135,17 @@ fi
 # opzionale: dominio pubblico per HTTPS in Caddy e site_url Mautic
 [ -z "${MAUTIC_DOMAIN:-}" ] && upsert_env_var "MAUTIC_DOMAIN" "" || true
 
+# Mattermost: default + mapping admin unificato se mancano
+[ -z "${MATTERMOST_SITEURL:-}" ]        && upsert_env_var "MATTERMOST_SITEURL" "http://chat.localhost" && export MATTERMOST_SITEURL="http://chat.localhost"
+
+[ -z "${MATTERMOST_ADMIN_USER:-}" ]     && upsert_env_var "MATTERMOST_ADMIN_USER"  "$ADMIN_USER"  && export MATTERMOST_ADMIN_USER="$ADMIN_USER"
+[ -z "${MATTERMOST_ADMIN_EMAIL:-}" ]    && upsert_env_var "MATTERMOST_ADMIN_EMAIL" "$ADMIN_EMAIL" && export MATTERMOST_ADMIN_EMAIL="$ADMIN_EMAIL"
+[ -z "${MATTERMOST_ADMIN_PASS:-}" ]     && upsert_env_var "MATTERMOST_ADMIN_PASS"  "$ADMIN_PASS"  && export MATTERMOST_ADMIN_PASS="$ADMIN_PASS"
+
+[ -z "${MATTERMOST_TEAM_NAME:-}" ]      && upsert_env_var "MATTERMOST_TEAM_NAME"   "cloudetta"    && export MATTERMOST_TEAM_NAME="cloudetta"
+[ -z "${MATTERMOST_TEAM_DISPLAY:-}" ]   && upsert_env_var "MATTERMOST_TEAM_DISPLAY" "Cloudetta"    && export MATTERMOST_TEAM_DISPLAY="Cloudetta"
+
+
 # === 2) Avvia (o riutilizza) docker compose =================================
 if docker compose ps -q | grep -q .; then
   echo "[bootstrap] Stack già attivo: non rilancio docker compose up."
@@ -151,6 +162,8 @@ NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://nextcloud:80}"
 ODOO_URL="${ODOO_URL:-http://odoo:8069}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
 MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
+MATTERMOST_URL="${MATTERMOST_URL:-http://mattermost:8065}"
+
 
 echo "[bootstrap] Attendo servizi…"
 wait_on_http "$N8N_URL" 120 2 || true
@@ -392,6 +405,60 @@ else
 fi
 ' || echo "WARN: configurazione Mautic non completamente automatizzabile (verifica via UI)."
 
+# 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
+echo "[bootstrap] Configuro Mattermost…"
+
+# attendo l'HTTP pronto (ping)
+wait_on_http "${MATTERMOST_URL%/}/api/v4/system/ping" 180 2 || true
+
+# eseguo comandi in local-mode via socket (abilitato nel compose)
+docker compose exec -T mattermost bash -lc '
+set -e
+export MMCTL_LOCAL_SOCKET_PATH="/var/tmp/mattermost_local.socket"
+
+# wrapper comodo
+mm() { mmctl --local "$@"; }
+
+# 1) assicura SiteURL (oltre all env)
+mm config set ServiceSettings.SiteURL "'"${MATTERMOST_SITEURL:-http://chat.localhost}"'" >/dev/null 2>&1 || true
+mm config reload >/dev/null 2>&1 || true
+
+# 2) crea/aggiorna utente admin
+#   - se esiste, salta la creazione; se serve, reset pass/email si può fare con mmctl user update
+if ! mm user list | awk '"'"'{print tolower($2)}'"'"' | grep -qx "$(echo "'"${MATTERMOST_ADMIN_EMAIL}"'" | tr '"'"'A-Z'"'"' '"'"'a-z'"'"')"; then
+  echo " - creo utente admin ${MATTERMOST_ADMIN_EMAIL}…"
+  mm user create \
+    --email "'"${MATTERMOST_ADMIN_EMAIL}"'" \
+    --username "'"${MATTERMOST_ADMIN_USER}"'" \
+    --password "'"${MATTERMOST_ADMIN_PASS}"'" \
+    --system_admin >/dev/null
+else
+  echo " - utente admin già presente"
+  # opzionale: forza password/email (idempotente, non fallire se non cambia)
+  mm user update --password "'"${MATTERMOST_ADMIN_PASS}"'" "$(mm user search "'"${MATTERMOST_ADMIN_EMAIL}"'" | awk '"'"'NR==1{print $1}'"'"')" >/dev/null 2>&1 || true
+fi
+
+# 3) crea team se manca
+if ! mm team list | awk '"'"'{print $2}'"'"' | grep -qx "'"${MATTERMOST_TEAM_NAME}"'"; then
+  echo " - creo team ${MATTERMOST_TEAM_NAME}…"
+  mm team create \
+    --name "'"${MATTERMOST_TEAM_NAME}"'" \
+    --display_name "'"${MATTERMOST_TEAM_DISPLAY}"'" \
+    --type open >/dev/null
+else
+  echo " - team già presente"
+fi
+
+# 4) aggiungi admin al team (idempotente)
+mm team add "'"${MATTERMOST_TEAM_NAME}"'" "'"${MATTERMOST_ADMIN_EMAIL}"'" >/dev/null 2>&1 || true
+
+# 5) reload config
+mm config reload >/dev/null 2>&1 || true
+
+echo " - Mattermost pronto."
+' || echo "WARN: configurazione Mattermost non completata (verifica i log)."
+
+
 # === 5) Integrazioni n8n (inline) ============================================
 echo "[bootstrap] Configuro integrazioni n8n…"
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"
@@ -482,6 +549,7 @@ Accessi interni:
 - Mautic     → ${MAUTIC_URL}           | login: ${ADMIN_USER}/${ADMIN_PASS}
 - n8n        → ${N8N_URL}              | BasicAuth: ${N8N_USER}/${N8N_PASS}
 - DokuWiki   → http://wiki.localhost   | (consigliato BasicAuth in Caddy)
+- Mattermost → ${MATTERMOST_URL}       | login: ${MATTERMOST_ADMIN_EMAIL}/${MATTERMOST_ADMIN_PASS} (team: ${MATTERMOST_TEAM_NAME})
 
 Nextcloud:
 - trusted_domains = ${TRUSTED_DOMAINS}
@@ -497,5 +565,10 @@ Mail (.env):
 - MAIL_PROVIDER=${MAIL_PROVIDER:-${MAIL_PROVIDER}}
 - MAIL_USER=${MAIL_USER:-${MAIL_USER}}
 - MAIL_PASS=******
+
+Mattermost:
+- SiteURL = ${MATTERMOST_SITEURL}
+- Team = ${MATTERMOST_TEAM_NAME} (${MATTERMOST_TEAM_DISPLAY})
+
 
 INFO

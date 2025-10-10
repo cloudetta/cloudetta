@@ -37,7 +37,3 @@ http://mautic.localhost {
 http://n8n.localhost {
   reverse_proxy n8n:5678
 }
-# ---------- Mattermost ----------
-http://chat.localhost {
-  reverse_proxy mattermost:8065
-}
