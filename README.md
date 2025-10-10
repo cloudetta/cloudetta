@@ -308,11 +308,32 @@ docker exec -it backup /backup/backup.sh
 * Stripe webhook listener
 * Admin reporting
 
-### Odoo (ERP / Fatturazione)
+### 🧾 Odoo (ERP / CRM / HR / Fatturazione / Magazzino)
 
-* `l10n_it`, `l10n_it_edi` per Fatturazione Elettronica
-* PEC/SDI integration ready
-* Sync con Django (n8n)
+* ERP modulare open-source completo per gestione aziendale
+* **Moduli principali preinstallati**:
+
+  * **Vendite / CRM** – pipeline, preventivi, contratti ricorrenti
+  * **Acquisti** – ordini fornitore, gestione fornitori e approvazioni
+  * **Magazzino (Inventory)** – tracciabilità prodotti e lotti, DDT, giacenze
+  * **Progetti / Task** – gestione attività con Gantt e Kanban
+  * **Contabilità e Fatturazione** – gestione IVA, partite aperte, riconciliazioni
+  * **Risorse Umane (HR)** – dipendenti, presenze, ferie, buste paga
+  * **Website / eCommerce** – vetrina e carrello integrati con ordini e pagamenti
+  * **Helpdesk / Assistenza** – ticket e SLA integrati con Redmine o Mattermost
+* **Localizzazione italiana completa** (`l10n_it`, `l10n_it_edi`)
+
+  * supporto per **Fatturazione Elettronica (SDI)** e **PEC**
+  * integrazione con CIE/SDI ready tramite moduli aggiuntivi
+* **Integrazioni**:
+
+  * Sync automatico clienti, prodotti e listini con Django via n8n
+  * Upload documenti e fatture PDF su Nextcloud
+  * Notifiche operative su Mattermost (workflow Odoo → n8n → Chat)
+  * Automazioni marketing su Mautic basate su eventi CRM / vendite
+* Interfaccia moderna, responsive e accessibile via web
+* Multi-azienda, multi-lingua, multi-valuta
+
 
 ### Nextcloud
 
