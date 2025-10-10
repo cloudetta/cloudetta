@@ -182,68 +182,64 @@ Le variabili principali (tutte in `.env`):
 
 ```mermaid
 flowchart LR
-  %% =============== PROXY ===============
   subgraph Proxy
-    Caddy[Caddy Reverse Proxy]
+    Caddy[Caddy Reverse Proxy];
   end
 
-  %% =============== CORE APPS ==========
   subgraph Core
-    Django[Django - Stripe]
-    Odoo[Odoo - ERP]
-    Nextcloud[Nextcloud]
-    Redmine[Redmine]
-    DokuWiki[DokuWiki]
-    N8N[n8n]
-    Mautic[Mautic - Marketing]
-    Mattermost[Mattermost - Team Chat]
+    Django[Django - Stripe];
+    Odoo[Odoo - ERP];
+    Nextcloud[Nextcloud];
+    Redmine[Redmine];
+    DokuWiki[DokuWiki];
+    N8N[n8n];
+    Mautic[Mautic - Marketing];
+    Mattermost[Mattermost - Team Chat];
   end
 
-  %% =============== DATABASES ==========
   subgraph Databases
-    PGD[(Postgres - Django)]
-    PGO[(Postgres - Odoo)]
-    PMM[(Postgres - Mattermost)]
-    MR[(MariaDB - Redmine)]
-    MN[(MariaDB - Nextcloud)]
-    MM[(MariaDB - Mautic)]
+    PGD[(Postgres Django)];
+    PGO[(Postgres Odoo)];
+    PMM[(Postgres Mattermost)];
+    MR[(MariaDB Redmine)];
+    MN[(MariaDB Nextcloud)];
+    MM[(MariaDB Mautic)];
   end
 
-  %% =============== BACKUP =============
   subgraph Backup
-    B[Backup Container (cron 02h00)]
+    B[Backup Container];
   end
 
-  Client((Browser)) --> Caddy
+  Client((Browser)) --> Caddy;
+  Caddy --> Django;
+  Caddy --> Odoo;
+  Caddy --> Nextcloud;
+  Caddy --> Redmine;
+  Caddy --> DokuWiki;
+  Caddy --> N8N;
+  Caddy --> Mautic;
+  Caddy --> Mattermost;
 
-  Caddy --> Django
-  Caddy --> Odoo
-  Caddy --> Nextcloud
-  Caddy --> Redmine
-  Caddy --> DokuWiki
-  Caddy --> N8N
-  Caddy --> Mautic
-  Caddy --> Mattermost
+  Django --- N8N;
+  N8N --- Odoo;
+  N8N --- Nextcloud;
+  N8N --- Redmine;
+  N8N --- Mautic;
 
-  Django --- N8N
-  N8N --- Odoo
-  N8N --- Nextcloud
-  N8N --- Redmine
-  N8N --- Mautic
+  Django --- PGD;
+  Odoo --- PGO;
+  Mattermost --- PMM;
+  Redmine --- MR;
+  Nextcloud --- MN;
+  Mautic --- MM;
 
-  Django --- PGD
-  Odoo --- PGO
-  Mattermost --- PMM
-  Redmine --- MR
-  Nextcloud --- MN
-  Mautic --- MM
+  B --- PGD;
+  B --- PGO;
+  B --- PMM;
+  B --- MR;
+  B --- MN;
+  B --- MM;
 
-  B --- PGD
-  B --- PGO
-  B --- PMM
-  B --- MR
-  B --- MN
-  B --- MM
 ```
 
 ---
