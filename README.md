@@ -69,7 +69,11 @@ sed -i 's/\r$//' install.sh
 chmod +x bootstrap_cloudetta.sh
 chmod +x install.sh
 ```
+Poi per montarlo:
 
+```bash
+./bootstrap_cloudetta.sh
+```
 
 ### 🇬🇧 Installation
 
@@ -77,23 +81,36 @@ chmod +x install.sh
 git clone https://github.com/antoniotrento/cloudetta.git
 cd cloudetta
 cp .env.example .env
-# Edit .env: ADMIN_*, DB passwords, mail (or Yahoo SMTP), Stripe, etc.
-chmod +x install.sh && ./install.sh
+# Edit .env:
+# Modifica .env:
+# ADMIN_USER=admin
+# ADMIN_PASS=ChangeMe!123
+# ADMIN_EMAIL=antonio.trento@yahoo.com
 ```
 
 Then:
 
 ```bash
-cd scripts
+sed -i 's/\r$//' .env
+sed -i 's/\r$//' bootstrap_cloudetta.sh
+sed -i 's/\r$//' install.sh
 chmod +x bootstrap_cloudetta.sh
-./bootstrap_cloudetta.sh
+chmod +x install.sh
 ```
 
 Then (if included):
 
 ```bash
-cd integration
-chmod +x setup_api_links.sh
+./bootstrap_cloudetta.sh
+```
+
+✅ Services (prod domains if configured in `.env`):
+
+```
+https://django.example.com
+https://odoo.example.com
+https://nextcloud.example.com
+```bash
 ./setup_api_links.sh
 ```
 
@@ -172,29 +189,29 @@ flowchart LR
 
   %% =============== CORE APPS ==========
   subgraph Core
-    Django[Django – Stripe]
-    Odoo[Odoo – ERP]
+    Django[Django - Stripe]
+    Odoo[Odoo - ERP]
     Nextcloud[Nextcloud]
     Redmine[Redmine]
     DokuWiki[DokuWiki]
     N8N[n8n]
-    Mautic[Mautic – Marketing]
-    Mattermost[Mattermost – Team Chat]
+    Mautic[Mautic - Marketing]
+    Mattermost[Mattermost - Team Chat]
   end
 
   %% =============== DATABASES ==========
   subgraph Databases
-    PGD[(Postgres – Django)]
-    PGO[(Postgres – Odoo)]
-    PMM[(Postgres – Mattermost)]
-    MR[(MariaDB – Redmine)]
-    MN[(MariaDB – Nextcloud)]
-    MM[(MariaDB – Mautic)]
+    PGD[(Postgres - Django)]
+    PGO[(Postgres - Odoo)]
+    PMM[(Postgres - Mattermost)]
+    MR[(MariaDB - Redmine)]
+    MN[(MariaDB - Nextcloud)]
+    MM[(MariaDB - Mautic)]
   end
 
   %% =============== BACKUP =============
   subgraph Backup
-    B[Backup Container (cron 02:00)]
+    B[Backup Container (cron 02h00)]
   end
 
   Client((Browser)) --> Caddy
