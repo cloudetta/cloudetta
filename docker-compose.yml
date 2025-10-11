@@ -1,4 +1,5 @@
-version: "3.9"
+name: cloudetta
+# (nota: 'version' è deprecato in compose v2)
 
 networks:
   web:
@@ -7,285 +8,359 @@ networks:
     driver: bridge
 
 services:
-  caddy:
-    image: caddy:2
+  # =================== CADDY (LOCAL) ===================
+  caddy-local:
+    image: caddy:2.8.4
     container_name: caddy
+    profiles: ["local"]
     restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
+    ports: ["80:80","443:443"]
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/Caddyfile.local:/etc/caddy/Caddyfile.local:ro
+      - ./caddy/Caddyfile.prod.tmpl:/etc/caddy/Caddyfile.prod.tmpl:ro
+      - ./caddy/entrypoint.sh:/entrypoint.sh:ro
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      - ADMIN_USER=${ADMIN_USER}
-      - WIKI_BCRYPT_HASH=${WIKI_BCRYPT_HASH}
-      - CADDY_EMAIL=${CADDY_EMAIL:-admin@example.com}
-    networks:
-      - web
-      - internal
+      ADMIN_USER: ${ADMIN_USER}
+      WIKI_BCRYPT_HASH: ${WIKI_BCRYPT_HASH}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+    entrypoint: ["/bin/sh","-lc","/entrypoint.sh local"]
+    networks: [ web, internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:2019/config || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
 
+  # =================== CADDY (PROD) senza build plugin (fallback stabile) ===================
+  caddy-prod:
+    image: caddy:2.8.4
+    container_name: caddy
+    profiles: ["prod","security"]
+    restart: unless-stopped
+    ports: ["80:80","443:443"]
+    volumes:
+      - ./caddy/Caddyfile.prod.tmpl:/etc/caddy/Caddyfile.prod.tmpl:ro
+      - ./caddy/Caddyfile.local:/etc/caddy/Caddyfile.local:ro
+      - ./caddy/entrypoint.sh:/entrypoint.sh:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      ADMIN_USER: ${ADMIN_USER}
+      WIKI_BCRYPT_HASH: ${WIKI_BCRYPT_HASH}
+      CADDY_EMAIL: ${CADDY_EMAIL:-admin@example.com}
+      DJANGO_DOMAIN: ${DJANGO_DOMAIN}
+      ODOO_DOMAIN: ${ODOO_DOMAIN}
+      REDMINE_DOMAIN: ${REDMINE_DOMAIN}
+      NEXTCLOUD_DOMAIN: ${NEXTCLOUD_DOMAIN}
+      N8N_DOMAIN: ${N8N_DOMAIN}
+      WIKI_DOMAIN: ${WIKI_DOMAIN}
+      MAUTIC_DOMAIN: ${MAUTIC_DOMAIN}
+      MATTERMOST_DOMAIN: ${MATTERMOST_DOMAIN}
+      KEYCLOAK_DOMAIN: ${KEYCLOAK_DOMAIN}
+      GRAFANA_DOMAIN: ${GRAFANA_DOMAIN}
+      LOKI_DOMAIN: ${LOKI_DOMAIN}
+      UPTIMEKUMA_DOMAIN: ${UPTIMEKUMA_DOMAIN}
+      ERRORS_DOMAIN: ${ERRORS_DOMAIN}
+      MINIO_DOMAIN: ${MINIO_DOMAIN}
+      COLLABORA_DOMAIN: ${COLLABORA_DOMAIN}
+      CROWDSEC_DOMAIN: ${CROWDSEC_DOMAIN}
+    entrypoint: ["/bin/sh","-lc","apt-get update && apt-get install -y --no-install-recommends gettext-base && /entrypoint.sh prod"]
+    networks: [ web, internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:2019/config || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+
+  # =================== CORE STACK (come prima) ===================
   django:
     build: ./django
     container_name: django
     command: gunicorn django_project.wsgi:application --bind 0.0.0.0:8000
-    depends_on:
-      - django-db
+    depends_on: [ django-db ]
     environment:
-      - DJANGO_SETTINGS_MODULE=django_project.settings
-      - DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY}
-      - DJANGO_DEBUG=${DJANGO_DEBUG:-False}
-      - DJANGO_ALLOWED_HOSTS=${DJANGO_ALLOWED_HOSTS:-django.localhost,django.example.com}
-      - DATABASE_URL=postgres://django:${DJANGO_DB_PASSWORD}@django-db:5432/django
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_xxx}
-      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_xxx}
-      # admin unificato (usato dal bootstrap)
-      - DJANGO_ADMIN_USER=${DJANGO_ADMIN_USER}
-      - DJANGO_ADMIN_EMAIL=${DJANGO_ADMIN_EMAIL}
-      - DJANGO_ADMIN_PASS=${DJANGO_ADMIN_PASS}
-    volumes:
-      - ./django:/app
-    ports:
-      - "8000:8000"
-    networks:
-      - internal
+      DJANGO_SETTINGS_MODULE: django_project.settings
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY}
+      DJANGO_DEBUG: ${DJANGO_DEBUG:-False}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-django.localhost,django.example.com}
+      DATABASE_URL: postgres://django:${DJANGO_DB_PASSWORD}@django-db:5432/django
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_xxx}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_xxx}
+      DJANGO_ADMIN_USER: ${DJANGO_ADMIN_USER}
+      DJANGO_ADMIN_EMAIL: ${DJANGO_ADMIN_EMAIL}
+      DJANGO_ADMIN_PASS: ${DJANGO_ADMIN_PASS}
+    volumes: [ ./django:/app ]
+    ports: [ "8000:8000" ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8000/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 15
 
   django-db:
     image: postgres:15
     container_name: django-db
     environment:
-      - POSTGRES_DB=django
-      - POSTGRES_USER=django
-      - POSTGRES_PASSWORD=${DJANGO_DB_PASSWORD}
-    volumes:
-      - django-db-data:/var/lib/postgresql/data
-    networks:
-      - internal
+      POSTGRES_DB: django
+      POSTGRES_USER: django
+      POSTGRES_PASSWORD: ${DJANGO_DB_PASSWORD}
+    volumes: [ django-db-data:/var/lib/postgresql/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U django -h 127.0.0.1 -d django"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   odoo:
     build: ./odoo
     container_name: odoo
-    depends_on:
-      - odoo-db
-      - redis
+    depends_on: [ odoo-db, redis ]
     environment:
-      - HOST=odoo-db
-      - USER=odoo
-      - PASSWORD=${ODOO_DB_PASSWORD}
-      # opzionale: Odoo user/pass/email unificati usati dal bootstrap per creare il DB
-      - ADMIN_EMAIL=${ADMIN_EMAIL}
-      - ADMIN_PASS=${ADMIN_PASS}
-      - ODOO_DB=${ODOO_DB}
-      - ODOO_LANG=${ODOO_LANG}
+      HOST: odoo-db
+      USER: odoo
+      PASSWORD: ${ODOO_DB_PASSWORD}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASS: ${ADMIN_PASS}
+      ODOO_DB: ${ODOO_DB}
+      ODOO_LANG: ${ODOO_LANG}
     volumes:
       - odoo-data:/var/lib/odoo
       - ./odoo-addons:/mnt/extra-addons
-    networks:
-      - internal
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8069/web/login || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 15
 
   odoo-db:
     image: postgres:15
     container_name: odoo-db
     environment:
-      - POSTGRES_DB=postgres
-      - POSTGRES_USER=odoo
-      - POSTGRES_PASSWORD=${ODOO_DB_PASSWORD}
-    volumes:
-      - postgres-odoo-data:/var/lib/postgresql/data
-    networks:
-      - internal
+      POSTGRES_DB: postgres
+      POSTGRES_USER: odoo
+      POSTGRES_PASSWORD: ${ODOO_DB_PASSWORD}
+    volumes: [ postgres-odoo-data:/var/lib/postgresql/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U odoo -h 127.0.0.1 -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
-    image: redis:7
+    image: redis:7.2.5
     container_name: redis
     command: ["redis-server", "--save", "60", "1"]
-    volumes:
-      - redis-data:/data
-    networks:
-      - internal
+    volumes: [ redis-data:/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redmine:
-    image: redmine:5
+    image: redmine:5.1.2
     container_name: redmine
-    depends_on:
-      - redmine-db
+    depends_on: [ redmine-db ]
     environment:
       REDMINE_DB_MYSQL: redmine-db
       REDMINE_DB_DATABASE: redmine
       REDMINE_DB_USERNAME: redmine
       REDMINE_DB_PASSWORD: ${REDMINE_DB_PASSWORD}
       REDMINE_SECRET_KEY_BASE: ${REDMINE_SECRET_KEY_BASE}
-    volumes:
-      - redmine-data:/usr/src/redmine/files
-    networks:
-      - internal
+    volumes: [ redmine-data:/usr/src/redmine/files ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:3000/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 15
 
   redmine-db:
-    image: mariadb:10.6
+    image: mariadb:10.11.9
     container_name: redmine-db
     environment:
-      - MYSQL_ROOT_PASSWORD=${REDMINE_ROOT_PW}
-      - MYSQL_DATABASE=redmine
-      - MYSQL_USER=redmine
-      - MYSQL_PASSWORD=${REDMINE_DB_PASSWORD}
-    volumes:
-      - redmine-db-data:/var/lib/mysql
-    networks:
-      - internal
+      MYSQL_ROOT_PASSWORD: ${REDMINE_ROOT_PW}
+      MYSQL_DATABASE: redmine
+      MYSQL_USER: redmine
+      MYSQL_PASSWORD: ${REDMINE_DB_PASSWORD}
+    volumes: [ redmine-db-data:/var/lib/mysql ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","mysqladmin ping -h 127.0.0.1 -p${REDMINE_ROOT_PW} --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   nextcloud:
-    image: nextcloud:26
+    image: nextcloud:26.0.13-apache
     container_name: nextcloud
-    depends_on:
-      - nextcloud-db
+    depends_on: [ nextcloud-db ]
     environment:
-      - MYSQL_HOST=nextcloud-db
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_USER=nextcloud
-      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
-      # admin unificato usato dal bootstrap all'install
-      - NEXTCLOUD_ADMIN_USER=${NEXTCLOUD_ADMIN_USER}
-      - NEXTCLOUD_ADMIN_PASS=${NEXTCLOUD_ADMIN_PASS}
-    volumes:
-      - nextcloud-data:/var/www/html
-    networks:
-      - internal
+      MYSQL_HOST: nextcloud-db
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+      NEXTCLOUD_ADMIN_USER: ${NEXTCLOUD_ADMIN_USER}
+      NEXTCLOUD_ADMIN_PASS: ${NEXTCLOUD_ADMIN_PASS}
+    volumes: [ nextcloud-data:/var/www/html ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost/status.php | grep -q installed || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
 
   nextcloud-db:
-    image: mariadb:10.6
+    image: mariadb:10.11.9
     container_name: nextcloud-db
     environment:
-      - MYSQL_ROOT_PASSWORD=${NEXTCLOUD_ROOT_PW}
-      - MYSQL_DATABASE=nextcloud
-      - MYSQL_USER=nextcloud
-      - MYSQL_PASSWORD=${NEXTCLOUD_DB_PASSWORD}
-    volumes:
-      - nextcloud-db-data:/var/lib/mysql
-    networks:
-      - internal
+      MYSQL_ROOT_PASSWORD: ${NEXTCLOUD_ROOT_PW}
+      MYSQL_DATABASE: nextcloud
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: ${NEXTCLOUD_DB_PASSWORD}
+    volumes: [ nextcloud-db-data:/var/lib/mysql ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","mysqladmin ping -h 127.0.0.1 -p${NEXTCLOUD_ROOT_PW} --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   n8n:
-    image: n8nio/n8n:latest
+    image: n8nio/n8n:1.79.2
     container_name: n8n
     environment:
-      - GENERIC_TIMEZONE=Europe/Rome
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${ADMIN_USER}
-      - N8N_BASIC_AUTH_PASSWORD=${ADMIN_PASS}
-    ports:
-      - "5678:5678"
-    volumes:
-      - n8n-data:/home/node/.n8n
-    networks:
-      - internal
+      GENERIC_TIMEZONE: Europe/Rome
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${ADMIN_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${ADMIN_PASS}
+    ports: [ "5678:5678" ]
+    volumes: [ n8n-data:/home/node/.n8n ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 
   dokuwiki:
-    image: linuxserver/dokuwiki:latest
+    image: lscr.io/linuxserver/dokuwiki:latest
     container_name: dokuwiki
     environment:
-      - PUID=1000
-      - PGID=1000
-    volumes:
-      - dokuwiki-data:/config
-    networks:
-      - internal
+      PUID: "1000"
+      PGID: "1000"
+    volumes: [ dokuwiki-data:/config ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
 
-  # ---------- MAUTIC ----------
   mautic:
-    image: mautic/mautic:5-apache
+    image: mautic/mautic:5.1-apache
     container_name: mautic
-    depends_on:
-      - mautic-db
+    depends_on: [ mautic-db ]
     environment:
-      - MAUTIC_DB_HOST=mautic-db
-      - MAUTIC_DB_USER=mautic
-      - MAUTIC_DB_PASSWORD=${MAUTIC_DB_PASSWORD}
-      - MAUTIC_DB_NAME=mautic
-      # opzionale: per URL pubblico se usi dominio
-      - MAUTIC_DOMAIN=${MAUTIC_DOMAIN}
-    volumes:
-      - mautic-data:/var/www/html
-    networks:
-      - internal
+      MAUTIC_DB_HOST: mautic-db
+      MAUTIC_DB_USER: mautic
+      MAUTIC_DB_PASSWORD: ${MAUTIC_DB_PASSWORD}
+      MAUTIC_DB_NAME: mautic
+      MAUTIC_DOMAIN: ${MAUTIC_DOMAIN}
+    volumes: [ mautic-data:/var/www/html ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
 
   mautic-db:
-    image: mariadb:10.6
+    image: mariadb:10.11.9
     container_name: mautic-db
     environment:
-      - MYSQL_ROOT_PASSWORD=${MAUTIC_ROOT_PW}
-      - MYSQL_DATABASE=mautic
-      - MYSQL_USER=mautic
-      - MYSQL_PASSWORD=${MAUTIC_DB_PASSWORD}
-    volumes:
-      - mautic-db-data:/var/lib/mysql
-    networks:
-      - internal
+      MYSQL_ROOT_PASSWORD: ${MAUTIC_ROOT_PW}
+      MYSQL_DATABASE: mautic
+      MYSQL_USER: mautic
+      MYSQL_PASSWORD: ${MAUTIC_DB_PASSWORD}
+    volumes: [ mautic-db-data:/var/lib/mysql ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","mysqladmin ping -h 127.0.0.1 -p${MAUTIC_ROOT_PW} --silent || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
 
   mail:
     image: bytemark/smtp
     container_name: mail
     environment:
-      - PROVIDER=${MAIL_PROVIDER:-sendgrid}
-      - SMTP_USER=${MAIL_USER:-admin@example.com}
-      - SMTP_PASS=${MAIL_PASS:-changeme}
-    networks:
-      - internal
+      PROVIDER: ${MAIL_PROVIDER:-sendgrid}
+      SMTP_USER: ${MAIL_USER:-admin@example.com}
+      SMTP_PASS: ${MAIL_PASS:-changeme}
+    networks: [ internal ]
 
-  # ---------- MATTERMOST ----------
   mattermost:
-    image: mattermost/mattermost-team-edition:latest
+    image: mattermost/mattermost-team-edition:10.7
     container_name: mattermost
-    depends_on:
-      - mattermost-db
+    depends_on: [ mattermost-db ]
     environment:
-      # URL pubblico (Caddy fa da proxy in locale su chat.localhost)
-      - MM_SERVICESETTINGS_SITEURL=${MATTERMOST_SITEURL:-http://chat.localhost}
-      - MM_SERVICESETTINGS_ENABLELOCALMODE=true
-      - MM_SERVICESETTINGS_LOCALMODESOCKETLOCATION=/var/tmp/mattermost_local.socket
-
-      # DB Postgres
-      - MM_SQLSETTINGS_DRIVERNAME=postgres
-      - MM_SQLSETTINGS_DATASOURCE=postgres://mmuser:${MATTERMOST_DB_PASSWORD}@mattermost-db:5432/mattermost?sslmode=disable&connect_timeout=10
-
-      # Email (riusa le tue MAIL_* se presenti)
-      - MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL=true
-      - MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS=true
-      - MM_EMAILSETTINGS_SMTPSERVER=${MAIL_HOST:-}
-      - MM_EMAILSETTINGS_SMTPPORT=${MAIL_PORT:-}
-      - MM_EMAILSETTINGS_CONNECTIONSECURITY=${MAIL_ENCRYPTION:-}
-      - MM_EMAILSETTINGS_SMTPUSERNAME=${MAIL_USER:-}
-      - MM_EMAILSETTINGS_SMTPPASSWORD=${MAIL_PASS:-}
-      - MM_EMAILSETTINGS_FEEDBACKEMAIL=${MAIL_FROM_ADDRESS:-${ADMIN_EMAIL}}
-      - MM_EMAILSETTINGS_REPLYTOADDRESS=${MAIL_FROM_ADDRESS:-${ADMIN_EMAIL}}
-
-      # Varie
-      - TZ=${TZ:-Europe/Rome}
-      - MM_LOGSETTINGS_ENABLECONSOLE=true
-      - MM_PLUGINSETTINGS_ENABLE=true
+      MM_SERVICESETTINGS_SITEURL: ${MATTERMOST_SITEURL:-http://chat.localhost}
+      MM_SERVICESETTINGS_ENABLELOCALMODE: "true"
+      MM_SERVICESETTINGS_LOCALMODESOCKETLOCATION: /var/tmp/mattermost_local.socket
+      MM_SQLSETTINGS_DRIVERNAME: postgres
+      MM_SQLSETTINGS_DATASOURCE: postgres://mmuser:${MATTERMOST_DB_PASSWORD}@mattermost-db:5432/mattermost?sslmode=disable&connect_timeout=10
+      MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL: "true"
+      MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS: "true"
+      MM_EMAILSETTINGS_SMTPSERVER: ${MAIL_HOST:-}
+      MM_EMAILSETTINGS_SMTPPORT: ${MAIL_PORT:-}
+      MM_EMAILSETTINGS_CONNECTIONSECURITY: ${MAIL_ENCRYPTION:-}
+      MM_EMAILSETTINGS_SMTPUSERNAME: ${MAIL_USER:-}
+      MM_EMAILSETTINGS_SMTPPASSWORD: ${MAIL_PASS:-}
+      MM_EMAILSETTINGS_FEEDBACKEMAIL: ${MAIL_FROM_ADDRESS:-${ADMIN_EMAIL}}
+      MM_EMAILSETTINGS_REPLYTOADDRESS: ${MAIL_FROM_ADDRESS:-${ADMIN_EMAIL}}
+      TZ: ${TZ:-Europe/Rome}}
+      MM_LOGSETTINGS_ENABLECONSOLE: "true"
+      MM_PLUGINSETTINGS_ENABLE: "true"
     volumes:
       - mattermost_app:/mattermost/data
       - mattermost_logs:/mattermost/logs
       - mattermost_config:/mattermost/config
       - mattermost_plugins:/mattermost/plugins
       - mattermost_client:/mattermost/client/plugins
-    networks:
-      - internal
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8065/api/v4/system/ping | grep -q 'OK' || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
 
   mattermost-db:
     image: postgres:15
     container_name: mattermost-db
     environment:
-      - POSTGRES_USER=mmuser
-      - POSTGRES_PASSWORD=${MATTERMOST_DB_PASSWORD}
-      - POSTGRES_DB=mattermost
-    volumes:
-      - mattermost_pgdata:/var/lib/postgresql/data
-    networks:
-      - internal
+      POSTGRES_USER: mmuser
+      POSTGRES_PASSWORD: ${MATTERMOST_DB_PASSWORD}
+      POSTGRES_DB: mattermost
+    volumes: [ mattermost_pgdata:/var/lib/postgresql/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U mmuser -h 127.0.0.1 -d mattermost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
+  # =================== BACKUP container (tuo) ===================
   backup:
-    image: alpine:3.19
+    image: alpine:3.20
     container_name: backup
     volumes:
       - django-db-data:/django-db-data
@@ -309,9 +384,257 @@ services:
       - ./backups:/backups
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backup/backup.sh:/backup/backup.sh:ro
-    entrypoint: ["/bin/sh", "-c", "apk add --no-cache bash postgresql-client mariadb-client tar gzip && echo '0 2 * * * /backup/backup.sh >> /backups/backup.log 2>&1' | crontab - && crond -f"]
-    networks:
-      - internal
+    entrypoint: ["/bin/sh","-c","apk add --no-cache bash postgresql-client mariadb-client tar gzip && echo '0 2 * * * /backup/backup.sh >> /backups/backup.log 2>&1' | crontab - && crond -f"]
+    networks: [ internal ]
+
+  # =================== SSO (profili: sso) ===================
+  keycloak-db:
+    image: postgres:15
+    profiles: ["sso"]
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    volumes: [ keycloak_db:/var/lib/postgresql/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U keycloak -h 127.0.0.1 -d keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    profiles: ["sso"]
+    command: ["start","--http-enabled=true","--hostname-url","http://keycloak.localhost"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: keycloak-db
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+    depends_on: [ keycloak-db ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8080/realms/master/.well-known/openid-configuration >/dev/null 2>&1 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 15
+
+  # =================== Monitoring (profili: monitoring) ===================
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:v1.8.2
+    profiles: ["monitoring"]
+    # niente pid: host, niente network_mode: host
+    command: [ "--path.rootfs=/host" ]
+    volumes:
+      - "/:/host:ro"            # rimuoviamo :rslave
+    networks: [ internal ]
+    # opzionale in local per test diretto da host:
+    # ports: [ "9100:9100" ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.2
+    profiles: ["monitoring"]
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:8080/metrics"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: ["monitoring"]
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom_data:/prometheus
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:9090/-/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    profiles: ["monitoring"]
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alert_data:/alertmanager
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:9093/-/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana-oss:11.2.0
+    profiles: ["monitoring"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${PROM_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${PROM_ADMIN_PASS}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/provisioning:/etc/grafana/provisioning:ro
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:3000/robots.txt"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  # =================== Logging (profili: logging) ===================
+  loki:
+    image: grafana/loki:3.1.1
+    profiles: ["logging"]
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./logging/loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:3100/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    profiles: ["logging"]
+    volumes:
+      - ./logging/promtail-config.yml:/etc/promtail/config.yml:ro
+      - ${DOCKER_LOG_DIR}:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+    command: ["--config.file=/etc/promtail/config.yml"]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","wget","-qO-","http://localhost:9080/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  # =================== Uptime-Kuma (profili: uptime) ===================
+  uptime-kuma:
+    image: louislam/uptime-kuma:1.23.16
+    profiles: ["uptime"]
+    volumes: [ uptimekuma_data:/app/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:3001 || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  # =================== Error tracking (GlitchTip) (profili: errors) ===================
+  glitchtip-db:
+    image: postgres:15
+    profiles: ["errors"]
+    environment:
+      POSTGRES_DB: glitchtip
+      POSTGRES_USER: glitchtip
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD}
+    volumes: [ glitchtip_db:/var/lib/postgresql/data ]
+    networks: [ internal ]
+
+  glitchtip:
+    image: glitchtip/glitchtip:4.1.0
+    profiles: ["errors"]
+    environment:
+      DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASSWORD}@glitchtip-db:5432/glitchtip
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      EMAIL_URL: ''
+      ENABLE_SIGNUP: "true"
+    depends_on: [ glitchtip-db ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8000/health/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  # =================== Backup (MinIO + Restic) (profili: backup) ===================
+  minio:
+    image: minio/minio:latest
+    profiles: ["backup"]
+    command: ["server","/data","--console-address",":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: [ minio_data:/data ]
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","curl","-fsS","http://localhost:9000/minio/health/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+
+  restic-cron:
+    image: alpine:3.20
+    profiles: ["backup"]
+    environment:
+      RESTIC_REPOSITORY: ${RESTIC_REPO}
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      AWS_ACCESS_KEY_ID: ${RESTIC_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${RESTIC_SECRET_ACCESS_KEY}
+      TZ: Europe/Rome
+    volumes:
+      - /var/lib/docker/volumes:/vols:ro
+      - ./backups/restic:/restic
+    entrypoint: ["/bin/sh","-lc","apk add --no-cache restic curl tzdata; echo '0 3 * * * restic backup /vols --tag cloudetta >> /restic/backup.log 2>&1' | crontab - && crond -f"]
+    networks: [ internal ]
+
+  # =================== Office (Collabora) (profili: office) ===================
+  collabora:
+    image: collabora/code:24.04.10.1.1
+    profiles: ["office"]
+    environment:
+      extra_params: --o:ssl.enable=false
+      username: ${ADMIN_USER}
+      password: ${ADMIN_PASS}
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:9980 | grep -q OK || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  # =================== Security (CrowdSec core) (profili: security) ===================
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    profiles: ["security"]
+    volumes:
+      - crowdsec_data:/var/lib/crowdsec/data
+      - /var/log:/var/log:ro
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","cscli metrics >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+
+  # =================== Vulnerability scan (Trivy) (profili: vulnscan) ===================
+  trivy-cron:
+    image: aquasec/trivy:0.55.0
+    profiles: ["vulnscan"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./security/trivy:/reports
+    entrypoint: ["/bin/sh","-lc","echo '30 4 * * * /usr/local/bin/trivy image --severity HIGH,CRITICAL --format table --output /reports/images_$(date +\\%F).txt $(/usr/local/bin/docker images --format {{.Repository}}:{{.Tag}} | tr \"\\n\" \" \")' | crontab - && crond -f"]
+    networks: [ internal ]
 
 volumes:
   caddy_data:
@@ -334,3 +657,13 @@ volumes:
   mattermost_plugins:
   mattermost_client:
   mattermost_pgdata:
+  # nuovi
+  keycloak_db:
+  prom_data:
+  alert_data:
+  grafana_data:
+  loki_data:
+  uptimekuma_data:
+  glitchtip_db:
+  minio_data:
+  crowdsec_data:

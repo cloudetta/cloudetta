@@ -145,14 +145,47 @@ fi
 [ -z "${MATTERMOST_TEAM_NAME:-}" ]      && upsert_env_var "MATTERMOST_TEAM_NAME"   "cloudetta"    && export MATTERMOST_TEAM_NAME="cloudetta"
 [ -z "${MATTERMOST_TEAM_DISPLAY:-}" ]   && upsert_env_var "MATTERMOST_TEAM_DISPLAY" "Cloudetta"    && export MATTERMOST_TEAM_DISPLAY="Cloudetta"
 
-
-# === 2) Avvia (o riutilizza) docker compose =================================
-if docker compose ps -q | grep -q .; then
-  echo "[bootstrap] Stack già attivo: non rilancio docker compose up."
-else
-  echo "[bootstrap] Avvio docker compose…"
-  docker compose up -d
+# === 2) Avvio (o riutilizzo) docker compose — con profili local/prod =========
+# Se BOOTSTRAP_PROFILES non è definita, autodetect:
+#  - "prod" se almeno un dominio pubblico è valorizzato
+#  - altrimenti "local"
+if [ -z "${BOOTSTRAP_PROFILES:-}" ]; then
+  if [ -n "${DJANGO_DOMAIN}${ODOO_DOMAIN}${REDMINE_DOMAIN}${NEXTCLOUD_DOMAIN}${N8N_DOMAIN}${WIKI_DOMAIN}${MAUTIC_DOMAIN}${MATTERMOST_DOMAIN}" ]; then
+    BOOTSTRAP_PROFILES="prod"
+  else
+    BOOTSTRAP_PROFILES="local"
+  fi
 fi
+
+# Costruisci gli argomenti --profile
+COMPOSE_PROFILES_ARGS=""
+for p in ${BOOTSTRAP_PROFILES}; do
+  COMPOSE_PROFILES_ARGS="$COMPOSE_PROFILES_ARGS --profile $p"
+done
+
+echo "[bootstrap] Profili scelti: ${BOOTSTRAP_PROFILES}"
+
+# Evita che restino attivi entrambi i Caddy (uno per profilo)
+if echo " ${BOOTSTRAP_PROFILES} " | grep -q " local "; then
+  docker compose rm -sf caddy-prod 2>/dev/null || true
+fi
+if echo " ${BOOTSTRAP_PROFILES} " | grep -q " prod "; then
+  docker compose rm -sf caddy-local 2>/dev/null || true
+fi
+
+# Avvio/aggiorno lo stack (servizi senza profilo + profili selezionati)
+echo "[bootstrap] Avvio/aggiorno docker compose… (profili: ${BOOTSTRAP_PROFILES})"
+docker compose $COMPOSE_PROFILES_ARGS up -d --remove-orphans 
+
+# --- Avvio profili extra opzionali (es: "sso monitoring logging uptime") ---
+if [ -n "${BOOTSTRAP_EXTRA_PROFILES:-}" ]; then
+  EXTRA_ARGS=""
+  for p in ${BOOTSTRAP_EXTRA_PROFILES}; do EXTRA_ARGS="$EXTRA_ARGS --profile $p"; done
+  echo "[bootstrap] Avvio profili extra: ${BOOTSTRAP_EXTRA_PROFILES}"
+  docker compose $EXTRA_ARGS up -d --remove-orphans
+fi
+
+# Rileva/aggiorna la rete internal del compose (serve a curl_net/wait_on_*)
 CNET="$(detect_compose_net || true)"
 
 # === 3) Attesa servizi (ordine corretto) =====================================
@@ -163,7 +196,6 @@ ODOO_URL="${ODOO_URL:-http://odoo:8069}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
 MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
 MATTERMOST_URL="${MATTERMOST_URL:-http://mattermost:8065}"
-
 
 echo "[bootstrap] Attendo servizi…"
 wait_on_http "$N8N_URL" 120 2 || true
@@ -351,59 +383,126 @@ else
   echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."
 fi
 
-# 4e) Mautic: installazione/sync (idempotente)
+# 4e) Mautic: installazione/sync con autoriparazione (niente 500 accettati)
 echo "[bootstrap] Configuro Mautic…"
 # attendo DB Mautic
 wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
-# attendo HTTP
-wait_on_http "$MAUTIC_URL" 180 2 || true
 
-docker compose exec -T mautic bash -lc '
-set -e
-PHP=php
-cd /var/www/html
+MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
 
-CLI_OK=1
-$PHP -v >/dev/null 2>&1 || CLI_OK=0
+# helper: verifica HTTP (solo 200/30x/401/403/404)
+mautic_http_ok() {
+  local code
+  code=$(docker run --rm --network "${CNET:-bridge}" curlimages/curl -s -o /dev/null -w "%{http_code}" "$MAUTIC_URL" || true)
+  echo "[check] $MAUTIC_URL → $code"
+  echo "$code" | grep -qE '^(200|30[123]|401|403|404)$'
+}
 
-if [ $CLI_OK -eq 1 ]; then
-  # install non-interattivo se disponibile
-  if $PHP bin/console list 2>/dev/null | grep -q "mautic:install"; then
-    if [ ! -f app/config/local.php ] && [ ! -f config/local.php ]; then
-      echo "Mautic non installato: eseguo install CLI…"
-      $PHP bin/console mautic:install -n \
-        --db_driver=pdo_mysql \
-        --db_host="${MAUTIC_DB_HOST:-mautic-db}" \
-        --db_name="${MAUTIC_DB_NAME:-mautic}" \
-        --db_user="${MAUTIC_DB_USER:-mautic}" \
-        --db_password="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
-        --db_port="${MAUTIC_DB_PORT:-3306}" \
-        --admin_username="${ADMIN_USER:-admin}" \
-        --admin_password="${ADMIN_PASS:-ChangeMe!123}" \
-        --admin_email="${ADMIN_EMAIL:-admin@example.com}" \
-        --site_url="${MAUTIC_DOMAIN:+https://$MAUTIC_DOMAIN}" || true
+# helper: stampa qualche riga di log utile
+mautic_logs_snippet() {
+  echo "----- Mautic log (ultime righe) -----"
+  docker compose exec -T mautic bash -lc '
+    for f in var/log/*.log app/logs/*.log 2>/dev/null; do
+      [ -f "$f" ] && { echo "==> $f"; tail -n 120 "$f" | tail -n 120; }
+    done || true
+  ' || true
+  echo "-------------------------------------"
+}
+
+# autoriparazione Mautic (install/migrate/cache/permessi)
+mautic_repair() {
+  docker compose exec -T mautic bash -lc '
+    set -e
+    PHP=php
+    cd /var/www/html
+
+    # 1) Permessi (spesso causa dei 500)
+    chown -R www-data:www-data /var/www/html || true
+    find /var/www/html -type d -exec chmod 755 {} \; || true
+    find /var/www/html -type f -exec chmod 644 {} \; || true
+    [ -d var ] && chmod -R 775 var || true
+    [ -d app/cache ] && chmod -R 775 app/cache || true
+    [ -d app/logs ] && chmod -R 775 app/logs || true
+
+    # 2) CLI disponibile?
+    if ! $PHP -v >/dev/null 2>&1; then
+      echo "WARN: PHP CLI non disponibile nel container Mautic; salto riparazione."
+      exit 0
     fi
-  fi
 
-  # migrazioni se disponibili
-  if $PHP bin/console list 2>/dev/null | grep -q "doctrine:migrations:migrate"; then
-    $PHP bin/console doctrine:migrations:migrate -n || true
-  fi
+    # 3) Determina se installato
+    if [ -f app/config/local.php ] || [ -f config/local.php ]; then
+      INSTALLED=1
+    else
+      INSTALLED=0
+    fi
 
-  # update/create admin se disponibili i comandi
-  if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:"; then
-    $PHP bin/console mautic:user:update -u "${ADMIN_USER:-admin}" --password "${ADMIN_PASS:-ChangeMe!123}" --email "${ADMIN_EMAIL:-admin@example.com}" 2>/dev/null || \
-    $PHP bin/console mautic:user:create -u "${ADMIN_USER:-admin}" -p "${ADMIN_PASS:-ChangeMe!123}" -e "${ADMIN_EMAIL:-admin@example.com}" --role="Administrator" || true
-  fi
+    if [ "$INSTALLED" -eq 0 ]; then
+      echo "Mautic non installato: provo installazione CLI…"
+      if $PHP bin/console list 2>/dev/null | grep -q "mautic:install"; then
+        $PHP bin/console mautic:install -n \
+          --db_driver=pdo_mysql \
+          --db_host="${MAUTIC_DB_HOST:-mautic-db}" \
+          --db_name="${MAUTIC_DB_NAME:-mautic}" \
+          --db_user="${MAUTIC_DB_USER:-mautic}" \
+          --db_password="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
+          --db_port="${MAUTIC_DB_PORT:-3306}" \
+          --admin_username="${ADMIN_USER:-admin}" \
+          --admin_password="${ADMIN_PASS:-ChangeMe!123}" \
+          --admin_email="${ADMIN_EMAIL:-admin@example.com}" \
+          --site_url="${MAUTIC_DOMAIN:+https://$MAUTIC_DOMAIN}" || true
+      else
+        echo "WARN: comando mautic:install non disponibile in questa build; salto install."
+      fi
+    else
+      echo "Mautic risulta installato: applico riparazioni (migrate/cache/assets)…"
+      # migrazioni
+      if $PHP bin/console list 2>/dev/null | grep -q "doctrine:migrations:migrate"; then
+        $PHP bin/console doctrine:migrations:migrate -n || true
+      fi
+      # utente admin
+      if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:"; then
+        $PHP bin/console mautic:user:update -u "${ADMIN_USER:-admin}" --password "${ADMIN_PASS:-ChangeMe!123}" --email "${ADMIN_EMAIL:-admin@example.com}" 2>/dev/null || \
+        $PHP bin/console mautic:user:create -u "${ADMIN_USER:-admin}" -p "${ADMIN_PASS:-ChangeMe!123}" -e "${ADMIN_EMAIL:-admin@example.com}" --role="Administrator" || true
+      fi
+      # site_url
+      if [ -n "${MAUTIC_DOMAIN:-}" ] && $PHP bin/console list 2>/dev/null | grep -q "mautic:config:set"; then
+        $PHP bin/console mautic:config:set --name="site_url" --value="https://${MAUTIC_DOMAIN}" || true
+      fi
+      # pulizia cache + assets
+      $PHP bin/console cache:clear -n || true
+      if $PHP bin/console list 2>/dev/null | grep -q "assets:install"; then
+        $PHP bin/console assets:install --symlink --relative public || true
+      fi
+    fi
 
-  # site_url se MAUTIC_DOMAIN presente
-  if [ -n "${MAUTIC_DOMAIN:-}" ] && $PHP bin/console list 2>/dev/null | grep -q "mautic:config:set"; then
-    $PHP bin/console mautic:config:set --name="site_url" --value="https://${MAUTIC_DOMAIN}" || true
-  fi
-else
-  echo "WARN: CLI PHP non disponibile/affidabile in questo build; salta auto-config Mautic."
+    # 4) seconda passata permessi (post-cache)
+    chown -R www-data:www-data /var/www/html || true
+  ' || true
+}
+
+# 1) attendo che esponga qualcosa di valido (finestra iniziale)
+echo "[bootstrap] Attendo Mautic (prima risposta valida)…"
+if ! mautic_http_ok; then
+  echo "Mautic non ancora pronto (o 500). Provo riparazione #1…"
+  mautic_repair
 fi
-' || echo "WARN: configurazione Mautic non completamente automatizzabile (verifica via UI)."
+
+# 2) retry loop fino a 3 riparazioni
+attempt=1
+max_attempts=3
+until mautic_http_ok; do
+  if [ "$attempt" -ge "$max_attempts" ]; then
+    echo "Mautic ancora KO dopo ${max_attempts} tentativi."
+    mautic_logs_snippet
+    echo "Continuo il bootstrap, ma verifica Mautic manualmente."
+    break
+  fi
+  attempt=$((attempt+1))
+  echo "Provo riparazione #${attempt}…"
+  mautic_repair
+  sleep 4
+done
 
 # 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
 echo "[bootstrap] Configuro Mattermost…"
@@ -457,7 +556,6 @@ mm config reload >/dev/null 2>&1 || true
 
 echo " - Mattermost pronto."
 ' || echo "WARN: configurazione Mattermost non completata (verifica i log)."
-
 
 # === 5) Integrazioni n8n (inline) ============================================
 echo "[bootstrap] Configuro integrazioni n8n…"
@@ -569,6 +667,5 @@ Mail (.env):
 Mattermost:
 - SiteURL = ${MATTERMOST_SITEURL}
 - Team = ${MATTERMOST_TEAM_NAME} (${MATTERMOST_TEAM_DISPLAY})
-
 
 INFO

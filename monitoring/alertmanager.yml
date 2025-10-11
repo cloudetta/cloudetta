@@ -1,0 +1,5 @@
+route:
+  receiver: 'null'
+receivers:
+  - name: 'null'
+# Aggiungi in seguito integrazioni (Mattermost webhook, email, ecc.)

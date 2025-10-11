@@ -145,15 +145,52 @@ fi
 [ -z "${MATTERMOST_TEAM_NAME:-}" ]      && upsert_env_var "MATTERMOST_TEAM_NAME"   "cloudetta"    && export MATTERMOST_TEAM_NAME="cloudetta"
 [ -z "${MATTERMOST_TEAM_DISPLAY:-}" ]   && upsert_env_var "MATTERMOST_TEAM_DISPLAY" "Cloudetta"    && export MATTERMOST_TEAM_DISPLAY="Cloudetta"
 
-
-# === 2) Avvia (o riutilizza) docker compose =================================
-if docker compose ps -q | grep -q .; then
-  echo "[bootstrap] Stack già attivo: non rilancio docker compose up."
-else
-  echo "[bootstrap] Avvio docker compose…"
-  docker compose up -d
+# === 2) Avvio (o riutilizzo) docker compose — con profili local/prod =========
+# Se BOOTSTRAP_PROFILES non è definita, autodetect:
+#  - "prod" se almeno un dominio pubblico è valorizzato
+#  - altrimenti "local"
+if [ -z "${BOOTSTRAP_PROFILES:-}" ]; then
+  if [ -n "${DJANGO_DOMAIN}${ODOO_DOMAIN}${REDMINE_DOMAIN}${NEXTCLOUD_DOMAIN}${N8N_DOMAIN}${WIKI_DOMAIN}${MAUTIC_DOMAIN}${MATTERMOST_DOMAIN}" ]; then
+    BOOTSTRAP_PROFILES="prod"
+  else
+    BOOTSTRAP_PROFILES="local"
+  fi
 fi
+
+# Costruisci gli argomenti --profile
+COMPOSE_PROFILES_ARGS=""
+for p in ${BOOTSTRAP_PROFILES}; do
+  COMPOSE_PROFILES_ARGS="$COMPOSE_PROFILES_ARGS --profile $p"
+done
+
+echo "[bootstrap] Profili scelti: ${BOOTSTRAP_PROFILES}"
+
+# Evita che restino attivi entrambi i Caddy (uno per profilo)
+if echo " ${BOOTSTRAP_PROFILES} " | grep -q " local "; then
+  docker compose rm -sf caddy-prod 2>/dev/null || true
+fi
+if echo " ${BOOTSTRAP_PROFILES} " | grep -q " prod "; then
+  docker compose rm -sf caddy-local 2>/dev/null || true
+fi
+
+# Avvio/aggiorno lo stack (servizi senza profilo + profili selezionati)
+echo "[bootstrap] Avvio/aggiorno docker compose… (profili: ${BOOTSTRAP_PROFILES})"
+docker compose $COMPOSE_PROFILES_ARGS up -d --remove-orphans 
+
+# --- Avvio profili extra opzionali (es: "sso monitoring logging uptime") ---
+if [ -n "${BOOTSTRAP_EXTRA_PROFILES:-}" ]; then
+  EXTRA_ARGS=""
+  for p in ${BOOTSTRAP_EXTRA_PROFILES}; do EXTRA_ARGS="$EXTRA_ARGS --profile $p"; done
+  echo "[bootstrap] Avvio profili extra: ${BOOTSTRAP_EXTRA_PROFILES}"
+  docker compose $EXTRA_ARGS up -d --remove-orphans
+fi
+
+
+# Rileva/aggiorna la rete internal del compose (serve a curl_net/wait_on_*)
 CNET="$(detect_compose_net || true)"
+
+
+
 
 # === 3) Attesa servizi (ordine corretto) =====================================
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"

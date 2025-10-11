@@ -31,8 +31,13 @@ poi
 sed -i 's/\r$//' .env
 sed -i 's/\r$//' bootstrap_cloudetta.sh
 sed -i 's/\r$//' install.sh
+sed -i 's/\r$//' caddy/entrypoint.sh
+sed -i 's/\r$//' .env
+# (facoltativo) rimuovi un eventuale BOM in testa
+sed -i '1s/^\xEF\xBB\xBF//' .env
 chmod +x bootstrap_cloudetta.sh
 chmod +x install.sh
+chmod +x caddy/entrypoint.sh
 ```
 
 5. **Riparti da zero**

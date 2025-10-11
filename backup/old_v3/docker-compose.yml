@@ -232,58 +232,6 @@ services:
     networks:
       - internal
 
-  # ---------- MATTERMOST ----------
-  mattermost:
-    image: mattermost/mattermost-team-edition:latest
-    container_name: mattermost
-    depends_on:
-      - mattermost-db
-    environment:
-      # URL pubblico (Caddy fa da proxy in locale su chat.localhost)
-      - MM_SERVICESETTINGS_SITEURL=${MATTERMOST_SITEURL:-http://chat.localhost}
-      - MM_SERVICESETTINGS_ENABLELOCALMODE=true
-      - MM_SERVICESETTINGS_LOCALMODESOCKETLOCATION=/var/tmp/mattermost_local.socket
-
-      # DB Postgres
-      - MM_SQLSETTINGS_DRIVERNAME=postgres
-      - MM_SQLSETTINGS_DATASOURCE=postgres://mmuser:${MATTERMOST_DB_PASSWORD}@mattermost-db:5432/mattermost?sslmode=disable&connect_timeout=10
-
-      # Email (riusa le tue MAIL_* se presenti)
-      - MM_EMAILSETTINGS_ENABLESIGNUPWITHEMAIL=true
-      - MM_EMAILSETTINGS_SENDEMAILNOTIFICATIONS=true
-      - MM_EMAILSETTINGS_SMTPSERVER=${MAIL_HOST:-}
-      - MM_EMAILSETTINGS_SMTPPORT=${MAIL_PORT:-}
-      - MM_EMAILSETTINGS_CONNECTIONSECURITY=${MAIL_ENCRYPTION:-}
-      - MM_EMAILSETTINGS_SMTPUSERNAME=${MAIL_USER:-}
-      - MM_EMAILSETTINGS_SMTPPASSWORD=${MAIL_PASS:-}
-      - MM_EMAILSETTINGS_FEEDBACKEMAIL=${MAIL_FROM_ADDRESS:-${ADMIN_EMAIL}}
-      - MM_EMAILSETTINGS_REPLYTOADDRESS=${MAIL_FROM_ADDRESS:-${ADMIN_EMAIL}}
-
-      # Varie
-      - TZ=${TZ:-Europe/Rome}
-      - MM_LOGSETTINGS_ENABLECONSOLE=true
-      - MM_PLUGINSETTINGS_ENABLE=true
-    volumes:
-      - mattermost_app:/mattermost/data
-      - mattermost_logs:/mattermost/logs
-      - mattermost_config:/mattermost/config
-      - mattermost_plugins:/mattermost/plugins
-      - mattermost_client:/mattermost/client/plugins
-    networks:
-      - internal
-
-  mattermost-db:
-    image: postgres:15
-    container_name: mattermost-db
-    environment:
-      - POSTGRES_USER=mmuser
-      - POSTGRES_PASSWORD=${MATTERMOST_DB_PASSWORD}
-      - POSTGRES_DB=mattermost
-    volumes:
-      - mattermost_pgdata:/var/lib/postgresql/data
-    networks:
-      - internal
-
   backup:
     image: alpine:3.19
     container_name: backup
@@ -300,12 +248,6 @@ services:
       - n8n-data:/n8n-data
       - mautic-data:/mautic-data
       - mautic-db-data:/mautic-db-data
-      - mattermost_app:/mattermost_app
-      - mattermost_logs:/mattermost_logs
-      - mattermost_config:/mattermost_config
-      - mattermost_plugins:/mattermost_plugins
-      - mattermost_client:/mattermost_client
-      - mattermost_pgdata:/mattermost_pgdata
       - ./backups:/backups
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backup/backup.sh:/backup/backup.sh:ro
@@ -328,9 +270,3 @@ volumes:
   dokuwiki-data:
   mautic-data:
   mautic-db-data:
-  mattermost_app:
-  mattermost_logs:
-  mattermost_config:
-  mattermost_plugins:
-  mattermost_client:
-  mattermost_pgdata:
