@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ============================================================================
-# Cloudetta Bootstrap Installer (versione completa, uniformità ENV + Mautic)
+# Cloudetta Bootstrap Installer (versione completa, fix Odoo + Redmine env)
 # - Prepara/aggiorna .env
 # - Avvia/riutilizza docker compose
 # - Attende i servizi (n8n, Nextcloud, Redmine-DB → init → Redmine-HTTP, Django)
@@ -10,20 +10,31 @@ set -euo pipefail
 # - Django: migrate + admin
 # - Redmine: DB init + secret + sync admin + API key
 # - Odoo: master password + crea DB con demo (solo se manca)
-# - Mautic: install CLI (se disponibile), migrazioni, admin, site_url
 # - Integrazioni n8n (base)
 # - Stampa credenziali/URL
 # - Idempotente
 # ============================================================================
 
+# === 0) Parametri desiderati per l’ambiente (sovrascrivibili via env) ========
+DJANGO_ADMIN_USER="${DJANGO_ADMIN_USER:-admin}"
+DJANGO_ADMIN_EMAIL="${DJANGO_ADMIN_EMAIL:-admin@example.com}"
+DJANGO_ADMIN_PASS="${DJANGO_ADMIN_PASS:-ChangeMe!123}"
+
+NEXTCLOUD_ADMIN_USER="${NEXTCLOUD_ADMIN_USER:-admin}"
+NEXTCLOUD_ADMIN_PASS="${NEXTCLOUD_ADMIN_PASS:-ChangeMe!123}"
+
+N8N_USER="${N8N_USER:-admin}"
+N8N_PASSWORD="${N8N_PASSWORD:-ChangeMe!123}"
+
+MAIL_PROVIDER="${MAIL_PROVIDER:-sendgrid}"
+MAIL_USER="${MAIL_USER:-admin@example.com}"
+MAIL_PASS="${MAIL_PASS:-ChangeMe!Mail!123}"
+
 # === helpers ================================================================
 detect_compose_net() { docker network ls --format '{{.Name}}' | grep -E '_internal$' | head -n1; }
 CNET="$(detect_compose_net || true)"
 
-curl_net() { # curl containerizzato (no dipendenze host), silenzioso
-  local url="$1"; shift
-  docker run --rm --network "${CNET:-bridge}" curlimages/curl -s "$@" "$url"
-}
+curl_net() { local url="$1"; shift; docker run --rm --network "${CNET:-bridge}" curlimages/curl -s "$@" "$url"; }
 
 wait_on_http () {
   local url="$1"; local tries="${2:-60}"; local sleep_s="${3:-2}"
@@ -64,57 +75,47 @@ upsert_env_var () {
   fi
 }
 
-# === 1) Prepara .env (se manca) e applica default SOLO dove vuoto ============
+# === 1) Prepara .env a partire da .env.example se manca ======================
 if [ ! -f .env ]; then
   echo "[bootstrap] Creo .env da .env.example"
   cp -f .env.example .env || true
+  tmpfile=$(mktemp)
+  awk -v n8p="$N8N_PASSWORD" \
+      -v mpv="$MAIL_PROVIDER" \
+      -v mu="$MAIL_USER" \
+      -v mp="$MAIL_PASS" '
+    BEGIN{FS=OFS="="}
+    $1=="DJANGO_SECRET_KEY"   {$2=sprintf("%d", systime())}
+    $1=="DJANGO_DEBUG"        {$2="False"}
+    $1=="N8N_PASSWORD"        {$2=n8p}
+    $1=="MAIL_PROVIDER"       {$2=mpv}
+    $1=="MAIL_USER"           {$2=mu}
+    $1=="MAIL_PASS"           {$2=mp}
+    {print}
+  ' .env > "$tmpfile"
+  mv "$tmpfile" .env
+  chmod 600 .env || true
+else
+  echo "[bootstrap] Trovato .env esistente: non lo sovrascrivo"
 fi
 
-# aggiorna alcuni default nel file (secret key, debug, mail/n8n) SOLO se vuoti
-tmpfile=$(mktemp)
-awk -v n8p="${N8N_PASSWORD:-}" -v mpv="${MAIL_PROVIDER:-}" -v mu="${MAIL_USER:-}" -v mp="${MAIL_PASS:-}" '
-  BEGIN{FS=OFS="="}
-  $1=="DJANGO_SECRET_KEY" && ($2=="" || $2=="dev_change_me") {$2=sprintf("%d", systime())}
-  $1=="DJANGO_DEBUG"  && $2=="" {$2="False"}
-  $1=="N8N_PASSWORD"  && n8p!="" {$2=n8p}
-  $1=="MAIL_PROVIDER" && mpv!="" {$2=mpv}
-  $1=="MAIL_USER"     && mu!=""  {$2=mu}
-  $1=="MAIL_PASS"     && mp!=""  {$2=mp}
-  {print}
-' .env > "$tmpfile" && mv "$tmpfile" .env
-chmod 600 .env || true
+# === 1b) Unifica credenziali (ADMIN_*) e propaga =============================
+: "${ADMIN_USER:=$DJANGO_ADMIN_USER}"
+: "${ADMIN_PASS:=$DJANGO_ADMIN_PASS}"
+: "${ADMIN_EMAIL:=$DJANGO_ADMIN_EMAIL}"
+upsert_env_var "ADMIN_USER" "$ADMIN_USER"
+upsert_env_var "ADMIN_PASS" "$ADMIN_PASS"
+upsert_env_var "ADMIN_EMAIL" "$ADMIN_EMAIL"
 
-# carichiamo .env come sorgente di verità
-set -a; . ./.env; set +a
+grep -q '^DJANGO_ADMIN_USER=' .env 2>/dev/null || upsert_env_var "DJANGO_ADMIN_USER" "$ADMIN_USER"
+grep -q '^DJANGO_ADMIN_EMAIL=' .env 2>/dev/null || upsert_env_var "DJANGO_ADMIN_EMAIL" "$ADMIN_EMAIL"
+grep -q '^DJANGO_ADMIN_PASS=' .env 2>/dev/null || upsert_env_var "DJANGO_ADMIN_PASS" "$ADMIN_PASS"
+grep -q '^NEXTCLOUD_ADMIN_USER=' .env 2>/dev/null || upsert_env_var "NEXTCLOUD_ADMIN_USER" "$ADMIN_USER"
+grep -q '^NEXTCLOUD_ADMIN_PASS=' .env 2>/dev/null || upsert_env_var "NEXTCLOUD_ADMIN_PASS" "$ADMIN_PASS"
+grep -q '^N8N_PASSWORD=' .env 2>/dev/null || upsert_env_var "N8N_PASSWORD" "$ADMIN_PASS"
 
-# === 1b) Obbligatorie: devono essere presenti in .env =======================
-: "${ADMIN_USER:?metti ADMIN_USER in .env}"
-: "${ADMIN_PASS:?metti ADMIN_PASS in .env}"
-: "${ADMIN_EMAIL:?metti ADMIN_EMAIL in .env}"
-
-# Derivati applicativi: se mancano in .env, li generiamo dai valori unificati
-[ -z "${DJANGO_ADMIN_USER:-}" ]  && upsert_env_var "DJANGO_ADMIN_USER"  "$ADMIN_USER"  && export DJANGO_ADMIN_USER="$ADMIN_USER"
-[ -z "${DJANGO_ADMIN_EMAIL:-}" ] && upsert_env_var "DJANGO_ADMIN_EMAIL" "$ADMIN_EMAIL" && export DJANGO_ADMIN_EMAIL="$ADMIN_EMAIL"
-[ -z "${DJANGO_ADMIN_PASS:-}" ]  && upsert_env_var "DJANGO_ADMIN_PASS"  "$ADMIN_PASS"  && export DJANGO_ADMIN_PASS="$ADMIN_PASS"
-
-[ -z "${NEXTCLOUD_ADMIN_USER:-}" ] && upsert_env_var "NEXTCLOUD_ADMIN_USER" "$ADMIN_USER" && export NEXTCLOUD_ADMIN_USER="$ADMIN_USER"
-[ -z "${NEXTCLOUD_ADMIN_PASS:-}" ] && upsert_env_var "NEXTCLOUD_ADMIN_PASS" "$ADMIN_PASS" && export NEXTCLOUD_ADMIN_PASS="$ADMIN_PASS"
-
-# n8n: usa gli stessi dell’admin unificato se non specificato
-[ -z "${N8N_USER:-}" ]     && upsert_env_var "N8N_USER" "$ADMIN_USER" && export N8N_USER="$ADMIN_USER"
-[ -z "${N8N_PASSWORD:-}" ] && upsert_env_var "N8N_PASSWORD" "$ADMIN_PASS" && export N8N_PASSWORD="$ADMIN_PASS"
-
-# Odoo: master password = ADMIN_PASS (se mancante), DB defaults
-[ -z "${ODOO_MASTER_PASSWORD:-}" ] && upsert_env_var "ODOO_MASTER_PASSWORD" "$ADMIN_PASS" && export ODOO_MASTER_PASSWORD="$ADMIN_PASS"
-[ -z "${ODOO_DB:-}" ]              && upsert_env_var "ODOO_DB" "cloudetta" && export ODOO_DB="cloudetta"
-[ -z "${ODOO_DEMO:-}" ]            && upsert_env_var "ODOO_DEMO" "true"     && export ODOO_DEMO="true"
-[ -z "${ODOO_LANG:-}" ]            && upsert_env_var "ODOO_LANG" "it_IT"    && export ODOO_LANG="it_IT"
-
-# Nextcloud trusted domains default (se mancano)
-[ -z "${TRUSTED_DOMAINS:-}" ] && upsert_env_var "TRUSTED_DOMAINS" "localhost,127.0.0.1,nextcloud,nextcloud.localhost" && export TRUSTED_DOMAINS="localhost,127.0.0.1,nextcloud,nextcloud.localhost"
-
-# Redmine secret PRIMA dell’avvio, se manca
-if [ -z "${REDMINE_SECRET_KEY_BASE:-}" ]; then
+# === 1c) Secret Redmine PRIMA del primo avvio =================================
+if ! grep -q '^REDMINE_SECRET_KEY_BASE=' .env 2>/dev/null || grep -q '^REDMINE_SECRET_KEY_BASE=$' .env 2>/dev/null; then
   echo "[bootstrap] Genero REDMINE_SECRET_KEY_BASE…"
   if command -v openssl >/dev/null 2>&1; then
     RSKB="$(openssl rand -hex 64)"
@@ -122,29 +123,19 @@ if [ -z "${REDMINE_SECRET_KEY_BASE:-}" ]; then
     RSKB="$(head -c 64 /dev/urandom | od -vAn -tx1 | tr -d ' \n')"
   fi
   upsert_env_var "REDMINE_SECRET_KEY_BASE" "$RSKB"
-  export REDMINE_SECRET_KEY_BASE="$RSKB"
 fi
 
-# Mautic: default sicuri se mancano (puoi sovrascrivere in .env)
-[ -z "${MAUTIC_DB_HOST:-}" ]     && upsert_env_var "MAUTIC_DB_HOST" "mautic-db" && export MAUTIC_DB_HOST="mautic-db"
-[ -z "${MAUTIC_DB_NAME:-}" ]     && upsert_env_var "MAUTIC_DB_NAME" "mautic"    && export MAUTIC_DB_NAME="mautic"
-[ -z "${MAUTIC_DB_USER:-}" ]     && upsert_env_var "MAUTIC_DB_USER" "mautic"    && export MAUTIC_DB_USER="mautic"
-[ -z "${MAUTIC_DB_PASSWORD:-}" ] && upsert_env_var "MAUTIC_DB_PASSWORD" "dev_mautic_db_pw" && export MAUTIC_DB_PASSWORD="dev_mautic_db_pw"
-[ -z "${MAUTIC_DB_PORT:-}" ]     && upsert_env_var "MAUTIC_DB_PORT" "3306"      && export MAUTIC_DB_PORT="3306"
-[ -z "${MAUTIC_ROOT_PW:-}" ]     && upsert_env_var "MAUTIC_ROOT_PW" "dev_mautic_root_pw"   && export MAUTIC_ROOT_PW="dev_mautic_root_pw"
-# opzionale: dominio pubblico per HTTPS in Caddy e site_url Mautic
-[ -z "${MAUTIC_DOMAIN:-}" ] && upsert_env_var "MAUTIC_DOMAIN" "" || true
+# === 1d) Default Nextcloud/Odoo =============================================
+grep -q '^TRUSTED_DOMAINS=' .env 2>/dev/null || upsert_env_var "TRUSTED_DOMAINS" "localhost,127.0.0.1,nextcloud,nextcloud.localhost"
+grep -q '^ODOO_DB=' .env 2>/dev/null || upsert_env_var "ODOO_DB" "cloudetta"
+grep -q '^ODOO_MASTER_PASSWORD=' .env 2>/dev/null || upsert_env_var "ODOO_MASTER_PASSWORD" "$ADMIN_PASS"
+grep -q '^ODOO_DEMO=' .env 2>/dev/null || upsert_env_var "ODOO_DEMO" "true"
+grep -q '^ODOO_LANG=' .env 2>/dev/null || upsert_env_var "ODOO_LANG" "it_IT"
 
-# Mattermost: default + mapping admin unificato se mancano
-[ -z "${MATTERMOST_SITEURL:-}" ]        && upsert_env_var "MATTERMOST_SITEURL" "http://chat.localhost" && export MATTERMOST_SITEURL="http://chat.localhost"
-
-[ -z "${MATTERMOST_ADMIN_USER:-}" ]     && upsert_env_var "MATTERMOST_ADMIN_USER"  "$ADMIN_USER"  && export MATTERMOST_ADMIN_USER="$ADMIN_USER"
-[ -z "${MATTERMOST_ADMIN_EMAIL:-}" ]    && upsert_env_var "MATTERMOST_ADMIN_EMAIL" "$ADMIN_EMAIL" && export MATTERMOST_ADMIN_EMAIL="$ADMIN_EMAIL"
-[ -z "${MATTERMOST_ADMIN_PASS:-}" ]     && upsert_env_var "MATTERMOST_ADMIN_PASS"  "$ADMIN_PASS"  && export MATTERMOST_ADMIN_PASS="$ADMIN_PASS"
-
-[ -z "${MATTERMOST_TEAM_NAME:-}" ]      && upsert_env_var "MATTERMOST_TEAM_NAME"   "cloudetta"    && export MATTERMOST_TEAM_NAME="cloudetta"
-[ -z "${MATTERMOST_TEAM_DISPLAY:-}" ]   && upsert_env_var "MATTERMOST_TEAM_DISPLAY" "Cloudetta"    && export MATTERMOST_TEAM_DISPLAY="Cloudetta"
-
+# Esporta variabili
+set -a
+. ./.env
+set +a
 
 # === 2) Avvia (o riutilizza) docker compose =================================
 if docker compose ps -q | grep -q .; then
@@ -161,15 +152,11 @@ REDMINE_URL="${REDMINE_URL:-http://redmine:3000}"
 NEXTCLOUD_URL="${NEXTCLOUD_URL:-http://nextcloud:80}"
 ODOO_URL="${ODOO_URL:-http://odoo:8069}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
-MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
-MATTERMOST_URL="${MATTERMOST_URL:-http://mattermost:8065}"
-
 
 echo "[bootstrap] Attendo servizi…"
 wait_on_http "$N8N_URL" 120 2 || true
 wait_on_http "$NEXTCLOUD_URL" 120 2 || true
 
-# Redmine DB -> init
 wait_on_mysql redmine-db "${REDMINE_ROOT_PW:-root}" 120 2 || true
 
 echo "[bootstrap] Inizializzo DB Redmine (MariaDB)…"
@@ -194,27 +181,20 @@ for i in $(seq 1 10); do
 done
 
 # === 4) Configurazioni applicative ===========================================
-# 4a) Django superuser (NO fallback: usa solo ENV)
+# 4a) Django superuser
 echo "[bootstrap] Configuro Django superuser…"
 docker compose exec -T django python - <<'PY' || true
 import os, sys
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", os.environ.get("DJANGO_SETTINGS_MODULE","config.settings"))
-required = ["DJANGO_ADMIN_USER","DJANGO_ADMIN_EMAIL","DJANGO_ADMIN_PASS"]
-missing = [k for k in required if not os.environ.get(k)]
-if missing:
-    print("ERRORE Django: variabili mancanti:", ",".join(missing), file=sys.stderr)
-    sys.exit(1)
 try:
     import django; django.setup()
     from django.contrib.auth import get_user_model
     U = get_user_model()
-    username = os.environ["DJANGO_ADMIN_USER"]
-    email    = os.environ["DJANGO_ADMIN_EMAIL"]
-    password = os.environ["DJANGO_ADMIN_PASS"]
-    u, _ = U.objects.get_or_create(username=username, defaults={"email": email, "is_superuser": True, "is_staff": True})
-    u.email = email
-    u.set_password(password)
-    u.save()
+    username = os.environ.get("DJANGO_ADMIN_USER","admin")
+    email    = os.environ.get("DJANGO_ADMIN_EMAIL","admin@example.com")
+    password = os.environ.get("DJANGO_ADMIN_PASS","ChangeMe!123")
+    u, created = U.objects.get_or_create(username=username, defaults={"email": email,"is_superuser": True,"is_staff": True})
+    u.set_password(password); u.save()
     print("Django admin pronto:", u.username)
 except Exception as e:
     print("WARN Django:", e, file=sys.stderr)
@@ -244,7 +224,6 @@ fi
 # trusted_domains da env TRUSTED_DOMAINS
 idx=0
 for d in '"${TRUSTED_DOMAINS//,/ }"'; do
-  [ -n "$d" ] || continue
   runuser -u www-data -- $PHP occ config:system:set trusted_domains $idx --value "$d"
   idx=$((idx+1))
 done
@@ -257,9 +236,6 @@ fi
 
 # 4c) Odoo: master password + crea DB con demo (solo se manca)
 echo "[bootstrap] Configuro Odoo (master password + DB demo)…"
-: "${ADMIN_EMAIL:?metti ADMIN_EMAIL in .env}"
-: "${ADMIN_PASS:?metti ADMIN_PASS in .env}"
-
 docker compose exec -T odoo bash -lc '
 set -e
 install -m 600 /dev/stdin /var/lib/odoo/.odoorc <<EOF
@@ -303,20 +279,18 @@ docker compose exec -T \
   redmine bash -lc '
 bundle exec rails runner "
   email = ENV[\"ADMIN_EMAIL\"]
+  email = \"admin@example.com\" if email.nil? || email.strip.empty?
   pass  = ENV[\"ADMIN_PASS\"]
-  if email.to_s.strip.empty? || pass.to_s.strip.empty?
-    abort(\"ENV mancanti: ADMIN_EMAIL/ADMIN_PASS\")
-  end
+  pass  = \"ChangeMe!123\" if pass.nil? || pass.strip.empty?
+
   u = User.find_by_login(\"admin\")
   if u
-    u.password = pass
-    u.password_confirmation = pass
-    u.mail = email
-    u.must_change_passwd = false
+    u.password = pass; u.password_confirmation = pass
+    u.mail = email; u.must_change_passwd = false
     u.save!
     puts \"Redmine admin aggiornato: #{u.mail}\"
   else
-    abort(\"ERRORE: utente admin non trovato\")
+    puts \"ERRORE: utente admin non trovato\"
   end
 "
 ' || true
@@ -351,114 +325,6 @@ else
   echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."
 fi
 
-# 4e) Mautic: installazione/sync (idempotente)
-echo "[bootstrap] Configuro Mautic…"
-# attendo DB Mautic
-wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
-# attendo HTTP
-wait_on_http "$MAUTIC_URL" 180 2 || true
-
-docker compose exec -T mautic bash -lc '
-set -e
-PHP=php
-cd /var/www/html
-
-CLI_OK=1
-$PHP -v >/dev/null 2>&1 || CLI_OK=0
-
-if [ $CLI_OK -eq 1 ]; then
-  # install non-interattivo se disponibile
-  if $PHP bin/console list 2>/dev/null | grep -q "mautic:install"; then
-    if [ ! -f app/config/local.php ] && [ ! -f config/local.php ]; then
-      echo "Mautic non installato: eseguo install CLI…"
-      $PHP bin/console mautic:install -n \
-        --db_driver=pdo_mysql \
-        --db_host="${MAUTIC_DB_HOST:-mautic-db}" \
-        --db_name="${MAUTIC_DB_NAME:-mautic}" \
-        --db_user="${MAUTIC_DB_USER:-mautic}" \
-        --db_password="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
-        --db_port="${MAUTIC_DB_PORT:-3306}" \
-        --admin_username="${ADMIN_USER:-admin}" \
-        --admin_password="${ADMIN_PASS:-ChangeMe!123}" \
-        --admin_email="${ADMIN_EMAIL:-admin@example.com}" \
-        --site_url="${MAUTIC_DOMAIN:+https://$MAUTIC_DOMAIN}" || true
-    fi
-  fi
-
-  # migrazioni se disponibili
-  if $PHP bin/console list 2>/dev/null | grep -q "doctrine:migrations:migrate"; then
-    $PHP bin/console doctrine:migrations:migrate -n || true
-  fi
-
-  # update/create admin se disponibili i comandi
-  if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:"; then
-    $PHP bin/console mautic:user:update -u "${ADMIN_USER:-admin}" --password "${ADMIN_PASS:-ChangeMe!123}" --email "${ADMIN_EMAIL:-admin@example.com}" 2>/dev/null || \
-    $PHP bin/console mautic:user:create -u "${ADMIN_USER:-admin}" -p "${ADMIN_PASS:-ChangeMe!123}" -e "${ADMIN_EMAIL:-admin@example.com}" --role="Administrator" || true
-  fi
-
-  # site_url se MAUTIC_DOMAIN presente
-  if [ -n "${MAUTIC_DOMAIN:-}" ] && $PHP bin/console list 2>/dev/null | grep -q "mautic:config:set"; then
-    $PHP bin/console mautic:config:set --name="site_url" --value="https://${MAUTIC_DOMAIN}" || true
-  fi
-else
-  echo "WARN: CLI PHP non disponibile/affidabile in questo build; salta auto-config Mautic."
-fi
-' || echo "WARN: configurazione Mautic non completamente automatizzabile (verifica via UI)."
-
-# 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
-echo "[bootstrap] Configuro Mattermost…"
-
-# attendo l'HTTP pronto (ping)
-wait_on_http "${MATTERMOST_URL%/}/api/v4/system/ping" 180 2 || true
-
-# eseguo comandi in local-mode via socket (abilitato nel compose)
-docker compose exec -T mattermost bash -lc '
-set -e
-export MMCTL_LOCAL_SOCKET_PATH="/var/tmp/mattermost_local.socket"
-
-# wrapper comodo
-mm() { mmctl --local "$@"; }
-
-# 1) assicura SiteURL (oltre all env)
-mm config set ServiceSettings.SiteURL "'"${MATTERMOST_SITEURL:-http://chat.localhost}"'" >/dev/null 2>&1 || true
-mm config reload >/dev/null 2>&1 || true
-
-# 2) crea/aggiorna utente admin
-#   - se esiste, salta la creazione; se serve, reset pass/email si può fare con mmctl user update
-if ! mm user list | awk '"'"'{print tolower($2)}'"'"' | grep -qx "$(echo "'"${MATTERMOST_ADMIN_EMAIL}"'" | tr '"'"'A-Z'"'"' '"'"'a-z'"'"')"; then
-  echo " - creo utente admin ${MATTERMOST_ADMIN_EMAIL}…"
-  mm user create \
-    --email "'"${MATTERMOST_ADMIN_EMAIL}"'" \
-    --username "'"${MATTERMOST_ADMIN_USER}"'" \
-    --password "'"${MATTERMOST_ADMIN_PASS}"'" \
-    --system_admin >/dev/null
-else
-  echo " - utente admin già presente"
-  # opzionale: forza password/email (idempotente, non fallire se non cambia)
-  mm user update --password "'"${MATTERMOST_ADMIN_PASS}"'" "$(mm user search "'"${MATTERMOST_ADMIN_EMAIL}"'" | awk '"'"'NR==1{print $1}'"'"')" >/dev/null 2>&1 || true
-fi
-
-# 3) crea team se manca
-if ! mm team list | awk '"'"'{print $2}'"'"' | grep -qx "'"${MATTERMOST_TEAM_NAME}"'"; then
-  echo " - creo team ${MATTERMOST_TEAM_NAME}…"
-  mm team create \
-    --name "'"${MATTERMOST_TEAM_NAME}"'" \
-    --display_name "'"${MATTERMOST_TEAM_DISPLAY}"'" \
-    --type open >/dev/null
-else
-  echo " - team già presente"
-fi
-
-# 4) aggiungi admin al team (idempotente)
-mm team add "'"${MATTERMOST_TEAM_NAME}"'" "'"${MATTERMOST_ADMIN_EMAIL}"'" >/dev/null 2>&1 || true
-
-# 5) reload config
-mm config reload >/dev/null 2>&1 || true
-
-echo " - Mattermost pronto."
-' || echo "WARN: configurazione Mattermost non completata (verifica i log)."
-
-
 # === 5) Integrazioni n8n (inline) ============================================
 echo "[bootstrap] Configuro integrazioni n8n…"
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"
@@ -473,9 +339,9 @@ ODOO_USER="${ODOO_USER:-admin}"
 ODOO_PASS="${ODOO_PASS:-admin}"
 NEXTCLOUD_USER="${NEXTCLOUD_USER:-$NEXTCLOUD_ADMIN_USER}"
 NEXTCLOUD_PASS="${NEXTCLOUD_PASS:-$NEXTCLOUD_ADMIN_PASS}"
-# n8n basic auth: usa credenziali unificate, salvo override esplicito
-N8N_USER="${N8N_USER:-$ADMIN_USER}"
-N8N_PASS="${N8N_PASSWORD:-$ADMIN_PASS}"
+N8N_USER="${N8N_USER:-$N8N_USER}"
+N8N_PASS_FROM_ENV="${N8N_PASSWORD:-${N8N_PASS:-}}"
+N8N_PASS="${N8N_PASS_FROM_ENV:-$N8N_PASSWORD}"
 
 wait_on_http "$N8N_URL" 60 2 || true
 
@@ -529,7 +395,7 @@ JSON
 )
 create_n8n_workflow "Odoo_to_Django" "$Odoo_to_Django"
 
-echo "[bootstrap] Integrazioni n8n: base impostata."
+echo "[bootstrap] Ingegrazioni n8n: base impostata."
 
 # === 6) Riepilogo =============================================================
 cat <<INFO
@@ -546,10 +412,8 @@ Accessi interni:
 - Redmine    → ${REDMINE_URL}          | login: admin/${ADMIN_PASS}
 - Nextcloud  → ${NEXTCLOUD_URL}        | login: ${NEXTCLOUD_ADMIN_USER}/${NEXTCLOUD_ADMIN_PASS}
 - Odoo       → ${ODOO_URL}             | login: ${ADMIN_EMAIL}/${ADMIN_PASS}  (DB: ${ODOO_DB})
-- Mautic     → ${MAUTIC_URL}           | login: ${ADMIN_USER}/${ADMIN_PASS}
 - n8n        → ${N8N_URL}              | BasicAuth: ${N8N_USER}/${N8N_PASS}
 - DokuWiki   → http://wiki.localhost   | (consigliato BasicAuth in Caddy)
-- Mattermost → ${MATTERMOST_URL}       | login: ${MATTERMOST_ADMIN_EMAIL}/${MATTERMOST_ADMIN_PASS} (team: ${MATTERMOST_TEAM_NAME})
 
 Nextcloud:
 - trusted_domains = ${TRUSTED_DOMAINS}
@@ -558,17 +422,9 @@ Nextcloud:
 Redmine:
 - API key (REDMINE_API_KEY in .env): ${REDMINE_API_KEY:-<non disponibile>}
 
-Mautic (DB):
-- host=${MAUTIC_DB_HOST} name=${MAUTIC_DB_NAME} user=${MAUTIC_DB_USER} port=${MAUTIC_DB_PORT}
-
 Mail (.env):
-- MAIL_PROVIDER=${MAIL_PROVIDER:-${MAIL_PROVIDER}}
-- MAIL_USER=${MAIL_USER:-${MAIL_USER}}
+- MAIL_PROVIDER=$MAIL_PROVIDER
+- MAIL_USER=$MAIL_USER
 - MAIL_PASS=******
-
-Mattermost:
-- SiteURL = ${MATTERMOST_SITEURL}
-- Team = ${MATTERMOST_TEAM_NAME} (${MATTERMOST_TEAM_DISPLAY})
-
 
 INFO

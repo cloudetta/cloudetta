@@ -1,0 +1,87 @@
+{
+  admin :2019
+  email ${CADDY_EMAIL}
+}
+
+# ----- Preset sicurezza/log -----
+(security_preset) {
+  encode zstd gzip
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    X-Frame-Options "SAMEORIGIN"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Content-Security-Policy "default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https:"
+  }
+  log {
+    output file /data/access.log
+    format json
+  }
+}
+
+# ----- Core domini -----
+${DJANGO_DOMAIN:+https://${DJANGO_DOMAIN} {
+  import security_preset
+  reverse_proxy django:8000
+}}
+${ODOO_DOMAIN:+https://${ODOO_DOMAIN} {
+  import security_preset
+  reverse_proxy odoo:8069
+}}
+${REDMINE_DOMAIN:+https://${REDMINE_DOMAIN} {
+  import security_preset
+  reverse_proxy redmine:3000
+}}
+${WIKI_DOMAIN:+https://${WIKI_DOMAIN} {
+  import security_preset
+  reverse_proxy dokuwiki:80
+}}
+${NEXTCLOUD_DOMAIN:+https://${NEXTCLOUD_DOMAIN} {
+  import security_preset
+  reverse_proxy nextcloud:80
+}}
+${MAUTIC_DOMAIN:+https://${MAUTIC_DOMAIN} {
+  import security_preset
+  reverse_proxy mautic:80
+}}
+${N8N_DOMAIN:+https://${N8N_DOMAIN} {
+  import security_preset
+  reverse_proxy n8n:5678
+}}
+${MATTERMOST_DOMAIN:+https://${MATTERMOST_DOMAIN} {
+  import security_preset
+  reverse_proxy mattermost:8065
+}}
+
+# ----- Add-ons -----
+${KEYCLOAK_DOMAIN:+https://${KEYCLOAK_DOMAIN} {
+  import security_preset
+  reverse_proxy keycloak:8080
+}}
+${GRAFANA_DOMAIN:+https://${GRAFANA_DOMAIN} {
+  import security_preset
+  reverse_proxy grafana:3000
+}}
+${LOKI_DOMAIN:+https://${LOKI_DOMAIN} {
+  import security_preset
+  reverse_proxy loki:3100
+}}
+${UPTIMEKUMA_DOMAIN:+https://${UPTIMEKUMA_DOMAIN} {
+  import security_preset
+  reverse_proxy uptime-kuma:3001
+}}
+${ERRORS_DOMAIN:+https://${ERRORS_DOMAIN} {
+  import security_preset
+  reverse_proxy glitchtip:8000
+}}
+${MINIO_DOMAIN:+https://${MINIO_DOMAIN} {
+  import security_preset
+  reverse_proxy minio:9001
+}}
+${COLLABORA_DOMAIN:+https://${COLLABORA_DOMAIN} {
+  import security_preset
+  reverse_proxy collabora:9980
+}}
+
+# ----- (opzionale) CrowdSec bouncer -----
+# Aggiungi qui le direttive 'crowdsec' per i vhost che vuoi proteggere.
