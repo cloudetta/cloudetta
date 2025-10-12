@@ -24,6 +24,82 @@ cd ..
 rm -rf cloudetta
 ```
 
+
+
+Capito: alcuni container dei **profili extra** (monitoring/logging/backup/office…) sono rimasti su, quindi la network `cloudetta_internal` risulta “in uso”. Succede spesso se:
+
+* hai avviato i profili extra con il bootstrap (compose up separati),
+* poi hai cancellato la cartella del progetto (Compose non ha più il file per “governarli”),
+* o hai cambiato il compose e `down` non li ha presi tutti.
+
+Vai di “pulizia chirurgica” per **tutto il progetto `cloudetta`** usando le **label** di Compose (non serve il file YAML).
+
+### 1) Spegni e rimuovi TUTTI i container del progetto `cloudetta`
+
+```bash
+# stop + rm forzato di ogni container con label del progetto
+docker ps -aq --filter "label=com.docker.compose.project=cloudetta" \
+  | xargs -r docker rm -f
+```
+
+> Se per caso resta il `caddy` nominale:
+
+```bash
+docker rm -f caddy 2>/dev/null || true
+```
+
+### 2) Rimuovi le network del progetto
+
+```bash
+docker network ls -q --filter "label=com.docker.compose.project=cloudetta" \
+  | xargs -r docker network rm
+```
+
+### 3) Rimuovi i volumi del progetto
+
+```bash
+docker volume ls -q --filter "label=com.docker.compose.project=cloudetta" \
+  | xargs -r docker volume rm
+```
+
+### 4) (Facoltativo) Rimuovi **solo** ciò che vedi ancora con prefisso
+
+Se qualcosa fosse rimasto con il naming v2 (es. `cloudetta-*-1`):
+
+```bash
+docker rm -f $(docker ps -aq --filter "name=^cloudetta-") 2>/dev/null || true
+```
+
+### 5) Verifica
+
+```bash
+docker ps
+docker network ls | grep cloudetta || true
+docker volume ls | grep cloudetta || true
+```
+
+Se l’obiettivo è **ricominciare da zero** in modo “gentile” la prossima volta, invece di cancellare la cartella prima del `down`, fai così nell’ordine:
+
+```bash
+# dentro la cartella del progetto (finché esiste)
+docker compose down --volumes --remove-orphans
+
+# in più: profili extra che il bootstrap ha acceso
+docker compose --profile monitoring --profile logging --profile backup --profile office --profile sso --profile errors --profile uptime down --volumes --remove-orphans
+```
+
+> Poi, **se serve davvero** lo “sgombero” totale:
+
+```bash
+docker system prune -a --volumes -f
+```
+
+Con i comandi sopra dovresti eliminare i residui che vedi ora (`loki`, `grafana`, `prometheus`, `alertmanager`, `promtail`, `node-exporter`, `uptime-kuma`, `minio`, `collabora`, `keycloak-db`, e il `caddy` nominato). Dopo il punto 1–3, la `cloudetta_internal` non risulterà più “in use”.
+
+
+
+
+
 4.1. copia i file se modificati
 4.2. assicurati che i file abbiano LF come terminatore di linea (non CRLF) e siano eseguibili
 poi 

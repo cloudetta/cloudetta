@@ -266,7 +266,7 @@ services:
       retries: 10
 
   mautic:
-    image: mautic/mautic:5.1-apache
+    image: mautic/mautic:6-apache
     container_name: mautic
     depends_on: [ mautic-db ]
     environment:
@@ -274,14 +274,54 @@ services:
       MAUTIC_DB_USER: mautic
       MAUTIC_DB_PASSWORD: ${MAUTIC_DB_PASSWORD}
       MAUTIC_DB_NAME: mautic
-      MAUTIC_DOMAIN: ${MAUTIC_DOMAIN}
-    volumes: [ mautic-data:/var/www/html ]
+      MAUTIC_DB_PORT: "3306"
+      # aiuta Doctrine a parlare con MariaDB 10.11
+      MAUTIC_DB_SERVER_VERSION: "mariadb-10.11"
+      PHP_INI_VALUE_DATE_TIMEZONE: Europe/Rome
+    volumes:
+      - mautic_config:/var/www/html/config
+      - mautic_media:/var/www/html/docroot/media
+      - mautic_logs:/var/www/html/var/log
     networks: [ internal ]
     healthcheck:
       test: ["CMD-SHELL","wget -qO- http://localhost/ || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 10
+
+  mautic-cron:
+    image: mautic/mautic:6-apache
+    depends_on: [ mautic-db, mautic ]
+    environment:
+      MAUTIC_DB_HOST: mautic-db
+      MAUTIC_DB_USER: mautic
+      MAUTIC_DB_PASSWORD: ${MAUTIC_DB_PASSWORD}
+      MAUTIC_DB_NAME: mautic
+      MAUTIC_DB_PORT: "3306"
+      MAUTIC_DB_SERVER_VERSION: "mariadb-10.11"
+      PHP_INI_VALUE_DATE_TIMEZONE: Europe/Rome
+    volumes:
+      - mautic_config:/var/www/html/config
+      - mautic_media:/var/www/html/docroot/media
+      - mautic_logs:/var/www/html/var/log
+    networks: [ internal ]
+    entrypoint: ["/bin/sh","-lc"]
+    command: |
+      '
+      for i in $(seq 1 120); do
+        [ -f /var/www/html/bin/console ] && mysqladmin ping -h "$MAUTIC_DB_HOST" -P "$MAUTIC_DB_PORT" -u"$MAUTIC_DB_USER" -p"$MAUTIC_DB_PASSWORD" >/dev/null 2>&1 && break
+        sleep 2
+      done
+      echo "*/15 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:segments:update --batch-limit=500 -n'\'' www-data" > /etc/crontabs/root
+      echo "*/15 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:campaigns:update -n'\'' www-data" >> /etc/crontabs/root
+      echo "*/5  * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:campaigns:trigger -n'\'' www-data" >> /etc/crontabs/root
+      echo "*/10 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:messages:send -n'\'' www-data" >> /etc/crontabs/root
+      echo "*/10 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:emails:send -n'\'' www-data" >> /etc/crontabs/root
+      crond -f -l 8
+      '
+
+
+
 
   mautic-db:
     image: mariadb:10.11.9
@@ -294,7 +334,7 @@ services:
     volumes: [ mautic-db-data:/var/lib/mysql ]
     networks: [ internal ]
     healthcheck:
-      test: ["CMD-SHELL","mysqladmin ping -h 127.0.0.1 -p${MAUTIC_ROOT_PW} --silent || exit 1"]
+      test: ["CMD-SHELL","mysqladmin ping -h 127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -373,7 +413,9 @@ services:
       - nextcloud-db-data:/nextcloud-db-data
       - dokuwiki-data:/dokuwiki-data
       - n8n-data:/n8n-data
-      - mautic-data:/mautic-data
+      - mautic_config:/mautic_config
+      - mautic_media:/mautic_media
+      - mautic_logs:/mautic_logs
       - mautic-db-data:/mautic-db-data
       - mattermost_app:/mattermost_app
       - mattermost_logs:/mattermost_logs
@@ -649,8 +691,10 @@ volumes:
   nextcloud-db-data:
   n8n-data:
   dokuwiki-data:
-  mautic-data:
   mautic-db-data:
+  mautic_config:
+  mautic_media:
+  mautic_logs:
   mattermost_app:
   mattermost_logs:
   mattermost_config:
