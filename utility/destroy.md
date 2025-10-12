@@ -14,7 +14,27 @@ docker compose --profile monitoring --profile logging --profile backup --profile
 docker system prune -a --volumes -f
 ```
 
+```bash
+cd ..
+rm -rf cloudetta
+```
+```bash
+sed -i 's/\r$//' .env
+sed -i 's/\r$//' bootstrap_cloudetta.sh
+sed -i 's/\r$//' install.sh
+sed -i 's/\r$//' caddy/entrypoint.sh
+sed -i 's/\r$//' .env
+# (facoltativo) rimuovi un eventuale BOM in testa
+sed -i '1s/^\xEF\xBB\xBF//' .env
+chmod +x bootstrap_cloudetta.sh
+chmod +x install.sh
+chmod +x caddy/entrypoint.sh
+```
 
+```bash
+# assicurati che .env sia corretto (LF, variabili, ecc.)
+./bootstrap_cloudetta.sh
+```
 
 Da **dentro** `~/progetti/cloudetta`:
 
