@@ -1,5 +1,21 @@
 ## 🧨 Istruzioni per distruggere tutto e ripartire pulito
 
+```bash
+docker compose down --volumes --remove-orphans
+docker network rm cloudetta_internal cloudetta_web 2>/dev/null || true
+docker system prune -a --volumes -f
+docker ps -aq --filter "label=com.docker.compose.project=cloudetta" | xargs -r docker rm -f
+docker rm -f caddy 2>/dev/null || true
+docker network ls -q --filter "label=com.docker.compose.project=cloudetta" | xargs -r docker network rm
+docker volume ls -q --filter "label=com.docker.compose.project=cloudetta" | xargs -r docker volume rm
+docker rm -f $(docker ps -aq --filter "name=^cloudetta-") 2>/dev/null || true
+docker compose down --volumes --remove-orphans
+docker compose --profile monitoring --profile logging --profile backup --profile office --profile sso --profile errors --profile uptime down --volumes --remove-orphans
+docker system prune -a --volumes -f
+```
+
+
+
 Da **dentro** `~/progetti/cloudetta`:
 
 1. **Ferma e rimuovi containers + volumi del progetto**

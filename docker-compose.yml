@@ -300,26 +300,141 @@ services:
       MAUTIC_DB_PORT: "3306"
       MAUTIC_DB_SERVER_VERSION: "mariadb-10.11"
       PHP_INI_VALUE_DATE_TIMEZONE: Europe/Rome
+      TZ: Europe/Rome
     volumes:
       - mautic_config:/var/www/html/config
       - mautic_media:/var/www/html/docroot/media
       - mautic_logs:/var/www/html/var/log
     networks: [ internal ]
+    restart: unless-stopped
     entrypoint: ["/bin/sh","-lc"]
     command: |
       '
-      for i in $(seq 1 120); do
-        [ -f /var/www/html/bin/console ] && mysqladmin ping -h "$MAUTIC_DB_HOST" -P "$MAUTIC_DB_PORT" -u"$MAUTIC_DB_USER" -p"$MAUTIC_DB_PASSWORD" >/dev/null 2>&1 && break
+      set -e
+      cd /var/www/html
+
+      echo "[cron] wait for app + db…"
+      for i in $(seq 1 120); do [ -f bin/console ] && break; sleep 2; done
+      for i in $(seq 1 60); do
+        mysqladmin ping -h "$MAUTIC_DB_HOST" -P "$MAUTIC_DB_PORT" -u"$MAUTIC_DB_USER" -p"$MAUTIC_DB_PASSWORD" >/dev/null 2>&1 && break
         sleep 2
       done
-      echo "*/15 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:segments:update --batch-limit=500 -n'\'' www-data" > /etc/crontabs/root
-      echo "*/15 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:campaigns:update -n'\'' www-data" >> /etc/crontabs/root
-      echo "*/5  * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:campaigns:trigger -n'\'' www-data" >> /etc/crontabs/root
-      echo "*/10 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:messages:send -n'\'' www-data" >> /etc/crontabs/root
-      echo "*/10 * * * * su -s /bin/sh -c '\''php -d memory_limit=-1 /var/www/html/bin/console mautic:emails:send -n'\'' www-data" >> /etc/crontabs/root
-      crond -f -l 8
-      '
 
+      # ---- autodetect comandi (variano tra versioni) -----------------------
+      LIST="$(php bin/console list 2>/dev/null || true)"
+
+      SEG_CMD="mautic:segments:update"
+      echo "$LIST" | grep -q "mautic:segments:update" || SEG_CMD="mautic:segments:rebuild"
+
+      CAMP_UPDATE="mautic:campaigns:update"
+      echo "$LIST" | grep -q "mautic:campaigns:update" || CAMP_UPDATE="mautic:campaigns:rebuild"
+
+      CAMP_TRIGGER="mautic:campaigns:trigger"
+
+      MSG_SEND="mautic:messages:send"
+      MAIL_SEND="mautic:emails:send"
+
+      FETCH_CMD=""
+      echo "$LIST" | grep -q "mautic:emails:fetch" && FETCH_CMD="mautic:emails:fetch"
+
+      WEBHOOKS_CMD=""
+      echo "$LIST" | grep -q "mautic:webhooks:process" && WEBHOOKS_CMD="mautic:webhooks:process"
+
+      CLEANUP_CMD=""
+      echo "$LIST" | grep -q "mautic:maintenance:cleanup" && CLEANUP_CMD="mautic:maintenance:cleanup"
+
+      echo "[cron] using:"
+      echo "  $SEG_CMD | $CAMP_UPDATE | $CAMP_TRIGGER | $MSG_SEND | $MAIL_SEND | ${FETCH_CMD:-<no-fetch>} | ${WEBHOOKS_CMD:-<no-webhooks>} | ${CLEANUP_CMD:-<no-cleanup>}"
+
+      # ---- scheduler leggero (frequenze consigliate) -----------------------
+      SEG_EVERY=900          # 15m
+      CAMP_UPDATE_EVERY=900  # 15m
+      TRIGGER_EVERY=300      # 5m
+      MSG_SEND_EVERY=600     # 10m
+      MAIL_SEND_EVERY=600    # 10m
+      FETCH_EVERY=900        # 15m
+      WEBHOOKS_EVERY=600     # 10m
+
+      state_dir=/tmp/mautic-cron
+      mkdir -p "$state_dir"
+
+      now_s() { date +%s; }
+      due() { f="$1"; int="$2"; last=0; [ -f "$f" ] && last="$(cat "$f" 2>/dev/null || echo 0)"; [ $(( $(now_s) - last )) -ge "$int" ]; }
+      mark() { date +%s > "$1" 2>/dev/null || true; }
+
+      # cleanup giornaliero alle 03:30 (TZ ereditato da container)
+      cleanup_due_today() {
+        [ -z "$CLEANUP_CMD" ] && return 1
+        stamp="$state_dir/cleanup.day"
+        today="$(date +%F)"
+        [ -f "$stamp" ] && [ "$(cat "$stamp" 2>/dev/null)" = "$today" ] && return 1
+        hhmm="$(date +%H:%M)"
+        [ "$hhmm" = "03:30" ]
+      }
+
+      echo "[cron] loop avviato…"
+      while true; do
+        # segments
+        if due "$state_dir/segments.ts" "$SEG_EVERY"; then
+          echo "[cron] $(date) $SEG_CMD"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$SEG_CMD" --batch-limit=500 -n || true
+          mark "$state_dir/segments.ts"
+        fi
+
+        # campaigns:update/rebuild
+        if due "$state_dir/campupd.ts" "$CAMP_UPDATE_EVERY"; then
+          echo "[cron] $(date) $CAMP_UPDATE"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$CAMP_UPDATE" -n || true
+          mark "$state_dir/campupd.ts"
+        fi
+
+        # campaigns:trigger
+        if due "$state_dir/camptrig.ts" "$TRIGGER_EVERY"; then
+          echo "[cron] $(date) $CAMP_TRIGGER"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$CAMP_TRIGGER" -n || true
+          mark "$state_dir/camptrig.ts"
+        fi
+
+        # messages:send
+        if due "$state_dir/msgsend.ts" "$MSG_SEND_EVERY"; then
+          echo "[cron] $(date) $MSG_SEND"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$MSG_SEND" -n || true
+          mark "$state_dir/msgsend.ts"
+        fi
+
+        # emails:send
+        if due "$state_dir/mailsend.ts" "$MAIL_SEND_EVERY"; then
+          echo "[cron] $(date) $MAIL_SEND"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$MAIL_SEND" -n || true
+          mark "$state_dir/mailsend.ts"
+        fi
+
+        # emails:fetch (se presente)
+        if [ -n "$FETCH_CMD" ] && due "$state_dir/fetch.ts" "$FETCH_EVERY"; then
+          echo "[cron] $(date) $FETCH_CMD"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$FETCH_CMD" -n || true
+          mark "$state_dir/fetch.ts"
+        fi
+
+        # webhooks:process (se presente)
+        if [ -n "$WEBHOOKS_CMD" ] && due "$state_dir/webhooks.ts" "$WEBHOOKS_EVERY"; then
+          echo "[cron] $(date) $WEBHOOKS_CMD"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$WEBHOOKS_CMD" -n || true
+          mark "$state_dir/webhooks.ts"
+        fi
+
+        # cleanup notturno (una volta al giorno)
+        if cleanup_due_today; then
+          echo "[cron] $(date) $CLEANUP_CMD (daily)"
+          runuser -u www-data -- php -d memory_limit=-1 bin/console "$CLEANUP_CMD" -n || true
+          date +%F > "$state_dir/cleanup.day" 2>/dev/null || true
+          # svuota cache dopo cleanup (non obbligatorio, ma utile)
+          runuser -u www-data -- php -d memory_limit=-1 bin/console cache:clear -n || true
+        fi
+
+        sleep 60
+      done
+      '
 
 
 
