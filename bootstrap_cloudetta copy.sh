@@ -173,9 +173,13 @@ if echo " ${BOOTSTRAP_PROFILES} " | grep -q " prod "; then
   docker compose rm -sf caddy-local 2>/dev/null || true
 fi
 
+# --- (micro-note) pre-pull immagini critiche per evitare errori di tag mancanti
+echo "[bootstrap] Pull immagini Mautic…"
+docker compose pull mautic mautic-cron || true
+
 # Avvio/aggiorno lo stack (servizi senza profilo + profili selezionati)
 echo "[bootstrap] Avvio/aggiorno docker compose… (profili: ${BOOTSTRAP_PROFILES})"
-docker compose $COMPOSE_PROFILES_ARGS up -d --remove-orphans 
+docker compose $COMPOSE_PROFILES_ARGS up -d --remove-orphans
 
 # --- Avvio profili extra opzionali (es: "sso monitoring logging uptime") ---
 if [ -n "${BOOTSTRAP_EXTRA_PROFILES:-}" ]; then
@@ -185,12 +189,8 @@ if [ -n "${BOOTSTRAP_EXTRA_PROFILES:-}" ]; then
   docker compose $EXTRA_ARGS up -d --remove-orphans
 fi
 
-
 # Rileva/aggiorna la rete internal del compose (serve a curl_net/wait_on_*)
 CNET="$(detect_compose_net || true)"
-
-
-
 
 # === 3) Attesa servizi (ordine corretto) =====================================
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"
@@ -200,7 +200,6 @@ ODOO_URL="${ODOO_URL:-http://odoo:8069}"
 N8N_URL="${N8N_URL:-http://n8n:5678}"
 MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
 MATTERMOST_URL="${MATTERMOST_URL:-http://mattermost:8065}"
-
 
 echo "[bootstrap] Attendo servizi…"
 wait_on_http "$N8N_URL" 120 2 || true
@@ -388,59 +387,115 @@ else
   echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."
 fi
 
-# 4e) Mautic: installazione/sync (idempotente)
+# --- 4e) Mautic (v6) — install CLI no-wizard + fix idempotenti ---
 echo "[bootstrap] Configuro Mautic…"
-# attendo DB Mautic
 wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
-# attendo HTTP
-wait_on_http "$MAUTIC_URL" 180 2 || true
+# helper HTTP per Mautic: accettiamo 200/30x/401/403/404
+mautic_http_ok() {
+  local code
+  code=$(docker run --rm --network "${CNET:-bridge}" \
+          curlimages/curl -s -o /dev/null -w "%{http_code}" "$MAUTIC_URL" || true)
+  echo "[check] $MAUTIC_URL → $code"
+  echo "$code" | grep -qE '^(200|30[123]|401|403|404)$'
+}
 
-docker compose exec -T mautic bash -lc '
+# Se hai un dominio, lo usiamo come site_url
+MAUTIC_BASE_URL="${MAUTIC_DOMAIN:+https://${MAUTIC_DOMAIN}}"
+MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
+
+docker compose exec -T \
+  -e MAUTIC_BASE_URL="${MAUTIC_BASE_URL}" \
+  -e MAUTIC_DB_HOST="${MAUTIC_DB_HOST:-mautic-db}" \
+  -e MAUTIC_DB_PORT="${MAUTIC_DB_PORT:-3306}" \
+  -e MAUTIC_DB_DATABASE="${MAUTIC_DB_NAME:-mautic}" \
+  -e MAUTIC_DB_USER="${MAUTIC_DB_USER:-mautic}" \
+  -e MAUTIC_DB_PASSWORD="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
+  -e MAUTIC_DB_SERVER_VERSION="mariadb-10.11" \
+  -e MAUTIC_BOOTSTRAP_ADMIN_EMAIL="${ADMIN_EMAIL}" \
+  -e MAUTIC_BOOTSTRAP_ADMIN_USER="${ADMIN_USER}" \
+  -e MAUTIC_BOOTSTRAP_ADMIN_PASS="${ADMIN_PASS}" \
+  mautic bash -lc '
 set -e
-PHP=php
 cd /var/www/html
+PHP=php
 
-CLI_OK=1
-$PHP -v >/dev/null 2>&1 || CLI_OK=0
+# Permessi minimi
+chown -R www-data:www-data /var/www/html || true
+find /var/www/html -type d -exec chmod 755 {} \; || true
+find /var/www/html -type f -exec chmod 644 {} \; || true
+[ -d var ] && chmod -R 775 var || true
 
-if [ $CLI_OK -eq 1 ]; then
-  # install non-interattivo se disponibile
-  if $PHP bin/console list 2>/dev/null | grep -q "mautic:install"; then
-    if [ ! -f app/config/local.php ] && [ ! -f config/local.php ]; then
-      echo "Mautic non installato: eseguo install CLI…"
-      $PHP bin/console mautic:install -n \
-        --db_driver=pdo_mysql \
-        --db_host="${MAUTIC_DB_HOST:-mautic-db}" \
-        --db_name="${MAUTIC_DB_NAME:-mautic}" \
-        --db_user="${MAUTIC_DB_USER:-mautic}" \
-        --db_password="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
-        --db_port="${MAUTIC_DB_PORT:-3306}" \
-        --admin_username="${ADMIN_USER:-admin}" \
-        --admin_password="${ADMIN_PASS:-ChangeMe!123}" \
-        --admin_email="${ADMIN_EMAIL:-admin@example.com}" \
-        --site_url="${MAUTIC_DOMAIN:+https://$MAUTIC_DOMAIN}" || true
-    fi
-  fi
-
-  # migrazioni se disponibili
-  if $PHP bin/console list 2>/dev/null | grep -q "doctrine:migrations:migrate"; then
-    $PHP bin/console doctrine:migrations:migrate -n || true
-  fi
-
-  # update/create admin se disponibili i comandi
-  if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:"; then
-    $PHP bin/console mautic:user:update -u "${ADMIN_USER:-admin}" --password "${ADMIN_PASS:-ChangeMe!123}" --email "${ADMIN_EMAIL:-admin@example.com}" 2>/dev/null || \
-    $PHP bin/console mautic:user:create -u "${ADMIN_USER:-admin}" -p "${ADMIN_PASS:-ChangeMe!123}" -e "${ADMIN_EMAIL:-admin@example.com}" --role="Administrator" || true
-  fi
-
-  # site_url se MAUTIC_DOMAIN presente
-  if [ -n "${MAUTIC_DOMAIN:-}" ] && $PHP bin/console list 2>/dev/null | grep -q "mautic:config:set"; then
-    $PHP bin/console mautic:config:set --name="site_url" --value="https://${MAUTIC_DOMAIN}" || true
-  fi
+CONFIG_FILE="config/local.php"
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "[mautic] Installazione CLI (no wizard)…"
+  su -s /bin/sh -c "
+    $PHP bin/console mautic:install \"${MAUTIC_BASE_URL:-http://mautic}\" \
+      --db_driver=pdo_mysql \
+      --db_host=\"${MAUTIC_DB_HOST}\" \
+      --db_port=\"${MAUTIC_DB_PORT}\" \
+      --db_name=\"${MAUTIC_DB_DATABASE}\" \
+      --db_user=\"${MAUTIC_DB_USER}\" \
+      --db_password=\"${MAUTIC_DB_PASSWORD}\" \
+      --admin_username=\"${MAUTIC_BOOTSTRAP_ADMIN_USER}\" \
+      --admin_email=\"${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}\" \
+      --admin_password=\"${MAUTIC_BOOTSTRAP_ADMIN_PASS}\" \
+      --no-interaction
+  " www-data
 else
-  echo "WARN: CLI PHP non disponibile/affidabile in questo build; salta auto-config Mautic."
+  echo "[mautic] Già installato: aggiorno schema…"
 fi
-' || echo "WARN: configurazione Mautic non completamente automatizzabile (verifica via UI)."
+
+# Migrazioni + plugin + cache
+$PHP bin/console doctrine:migrations:migrate -n || true
+$PHP bin/console mautic:plugins:reload -n || true
+
+# Admin: aggiorna se esiste, altrimenti crea
+if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:update"; then
+  $PHP bin/console mautic:user:update -u "${MAUTIC_BOOTSTRAP_ADMIN_USER}" \
+    --password "${MAUTIC_BOOTSTRAP_ADMIN_PASS}" \
+    --email "${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}" 2>/dev/null || true
+fi
+if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:create"; then
+  $PHP bin/console mautic:user:create -u "${MAUTIC_BOOTSTRAP_ADMIN_USER}" \
+    -p "${MAUTIC_BOOTSTRAP_ADMIN_PASS}" \
+    -e "${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}" --role="Administrator" 2>/dev/null || true
+fi
+
+# Site URL se disponibile
+if [ -n "${MAUTIC_BASE_URL}" ]; then
+  $PHP bin/console mautic:config:set --name=site_url --value="${MAUTIC_BASE_URL}" || true
+fi
+
+$PHP bin/console cache:clear -n || true
+chown -R www-data:www-data /var/www/html || true
+'
+
+# Attendo HTTP “valido” (evita che la UI torni al wizard)
+wait_on_http "$MAUTIC_URL" 120 2 || true
+
+
+# prova HTTP e stampa log se serve
+echo "[bootstrap] Attendo Mautic (prima risposta valida)…"
+if ! mautic_http_ok; then
+  echo "Mautic non ancora pronto. Controllo log:"
+  docker compose exec -T mautic bash -lc '
+    for f in var/log/*.log 2>/dev/null; do
+      [ -f "$f" ] && { echo "==> $f"; tail -n 120 "$f"; }
+    done || true
+  ' || true
+fi
+
+# (opzionale) forza site_url se hai un dominio pubblico
+if [ -n "${MAUTIC_DOMAIN}" ]; then
+  echo "[bootstrap] Imposto Mautic site_url=https://${MAUTIC_DOMAIN}"
+  docker compose exec -T mautic bash -lc '
+    runuser -u www-data -- php bin/console \
+      mautic:config:set --name=site_url --value="https://'"$MAUTIC_DOMAIN"'" || true
+    runuser -u www-data -- php bin/console cache:clear -n || true
+  '
+fi
+
+
 
 # 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
 echo "[bootstrap] Configuro Mattermost…"
@@ -494,7 +549,6 @@ mm config reload >/dev/null 2>&1 || true
 
 echo " - Mattermost pronto."
 ' || echo "WARN: configurazione Mattermost non completata (verifica i log)."
-
 
 # === 5) Integrazioni n8n (inline) ============================================
 echo "[bootstrap] Configuro integrazioni n8n…"
@@ -606,6 +660,5 @@ Mail (.env):
 Mattermost:
 - SiteURL = ${MATTERMOST_SITEURL}
 - Team = ${MATTERMOST_TEAM_NAME} (${MATTERMOST_TEAM_DISPLAY})
-
 
 INFO
