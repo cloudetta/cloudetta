@@ -1,3 +1,6 @@
+#manca apache superset da inerire
+
+
 grandissimo — ti propongo un’estensione “pulita” del tuo stack usando **profili Compose** dedicati, così puoi accendere/spegnere i blocchi a piacere:
 
 * `sso` → Keycloak (+ Postgres dedicato)

@@ -387,114 +387,92 @@ else
   echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."
 fi
 
-# --- 4e) Mautic (v6) — install CLI no-wizard + fix idempotenti ---
-echo "[bootstrap] Configuro Mautic…"
-wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
-# helper HTTP per Mautic: accettiamo 200/30x/401/403/404
-mautic_http_ok() {
-  local code
-  code=$(docker run --rm --network "${CNET:-bridge}" \
-          curlimages/curl -s -o /dev/null -w "%{http_code}" "$MAUTIC_URL" || true)
-  echo "[check] $MAUTIC_URL → $code"
-  echo "$code" | grep -qE '^(200|30[123]|401|403|404)$'
-}
+ # --- 4e) Mautic (v6) — install CLI no-wizard + fix idempotenti ---
+ echo "[bootstrap] Configuro Mautic…"
+ wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
 
-# Se hai un dominio, lo usiamo come site_url
-MAUTIC_BASE_URL="${MAUTIC_DOMAIN:+https://${MAUTIC_DOMAIN}}"
-MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
+ # Determina il site_url per Mautic
+ MAUTIC_BASE_URL="${MAUTIC_DOMAIN:+https://${MAUTIC_DOMAIN}}"
+ MAUTIC_URL_INTERNAL="http://mautic:80"
 
-docker compose exec -T \
-  -e MAUTIC_BASE_URL="${MAUTIC_BASE_URL}" \
-  -e MAUTIC_DB_HOST="${MAUTIC_DB_HOST:-mautic-db}" \
-  -e MAUTIC_DB_PORT="${MAUTIC_DB_PORT:-3306}" \
-  -e MAUTIC_DB_DATABASE="${MAUTIC_DB_NAME:-mautic}" \
-  -e MAUTIC_DB_USER="${MAUTIC_DB_USER:-mautic}" \
-  -e MAUTIC_DB_PASSWORD="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
-  -e MAUTIC_DB_SERVER_VERSION="mariadb-10.11" \
-  -e MAUTIC_BOOTSTRAP_ADMIN_EMAIL="${ADMIN_EMAIL}" \
-  -e MAUTIC_BOOTSTRAP_ADMIN_USER="${ADMIN_USER}" \
-  -e MAUTIC_BOOTSTRAP_ADMIN_PASS="${ADMIN_PASS}" \
-  mautic bash -lc '
-set -e
-cd /var/www/html
-PHP=php
+ docker compose exec -T \
+   -e MAUTIC_BASE_URL="${MAUTIC_BASE_URL}" \
+   -e MAUTIC_DB_HOST="${MAUTIC_DB_HOST:-mautic-db}" \
+   -e MAUTIC_DB_PORT="${MAUTIC_DB_PORT:-3306}" \
+   -e MAUTIC_DB_DATABASE="${MAUTIC_DB_NAME:-mautic}" \
+   -e MAUTIC_DB_USER="${MAUTIC_DB_USER:-mautic}" \
+   -e MAUTIC_DB_PASSWORD="${MAUTIC_DB_PASSWORD:-dev_mautic_db_pw}" \
+   -e MAUTIC_DB_SERVER_VERSION="mariadb-10.11" \
+   -e MAUTIC_BOOTSTRAP_ADMIN_EMAIL="${ADMIN_EMAIL}" \
+   -e MAUTIC_BOOTSTRAP_ADMIN_USER="${ADMIN_USER}" \
+   -e MAUTIC_BOOTSTRAP_ADMIN_PASS="${ADMIN_PASS}" \
+   mautic bash -lc '
+ set -e
+ cd /var/www/html
+ PHP=php
+ CONFIG_FILE="config/local.php"
 
-# Permessi minimi
-chown -R www-data:www-data /var/www/html || true
-find /var/www/html -type d -exec chmod 755 {} \; || true
-find /var/www/html -type f -exec chmod 644 {} \; || true
-[ -d var ] && chmod -R 775 var || true
+ # Se il file di configurazione non esiste, esegui l''installazione
+ if [ ! -f "$CONFIG_FILE" ]; then
+   echo "[mautic] File di configurazione non trovato. Avvio installazione..."
 
-CONFIG_FILE="config/local.php"
-if [ ! -f "$CONFIG_FILE" ]; then
-  echo "[mautic] Installazione CLI (no wizard)…"
-  su -s /bin/sh -c "
-    $PHP bin/console mautic:install \"${MAUTIC_BASE_URL:-http://mautic}\" \
-      --db_driver=pdo_mysql \
-      --db_host=\"${MAUTIC_DB_HOST}\" \
-      --db_port=\"${MAUTIC_DB_PORT}\" \
-      --db_name=\"${MAUTIC_DB_DATABASE}\" \
-      --db_user=\"${MAUTIC_DB_USER}\" \
-      --db_password=\"${MAUTIC_DB_PASSWORD}\" \
-      --admin_username=\"${MAUTIC_BOOTSTRAP_ADMIN_USER}\" \
-      --admin_email=\"${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}\" \
-      --admin_password=\"${MAUTIC_BOOTSTRAP_ADMIN_PASS}\" \
-      --no-interaction
-  " www-data
-else
-  echo "[mautic] Già installato: aggiorno schema…"
-fi
+   # Assicura i permessi sulla cartella di configurazione
+   mkdir -p config
+   chown www-data:www-data config
 
-# Migrazioni + plugin + cache
-$PHP bin/console doctrine:migrations:migrate -n || true
-$PHP bin/console mautic:plugins:reload -n || true
+   # Esegui l''installazione come utente www-data
+   su -s /bin/sh -c "
+     $PHP bin/console mautic:install \"${MAUTIC_BASE_URL:-http://mautic}\" \
+       --db_driver=pdo_mysql \
+       --db_host=\"${MAUTIC_DB_HOST}\" \
+       --db_port=\"${MAUTIC_DB_PORT}\" \
+       --db_name=\"${MAUTIC_DB_DATABASE}\" \
+       --db_user=\"${MAUTIC_DB_USER}\" \
+       --db_password=\"${MAUTIC_DB_PASSWORD}\" \
+       --admin_username=\"${MAUTIC_BOOTSTRAP_ADMIN_USER}\" \
+       --admin_email=\"${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}\" \
+       --admin_password=\"${MAUTIC_BOOTSTRAP_ADMIN_PASS}\" \
+       --no-interaction
+   " www-data
 
-# Admin: aggiorna se esiste, altrimenti crea
-if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:update"; then
-  $PHP bin/console mautic:user:update -u "${MAUTIC_BOOTSTRAP_ADMIN_USER}" \
-    --password "${MAUTIC_BOOTSTRAP_ADMIN_PASS}" \
-    --email "${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}" 2>/dev/null || true
-fi
-if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:create"; then
-  $PHP bin/console mautic:user:create -u "${MAUTIC_BOOTSTRAP_ADMIN_USER}" \
-    -p "${MAUTIC_BOOTSTRAP_ADMIN_PASS}" \
-    -e "${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}" --role="Administrator" 2>/dev/null || true
-fi
+   # Verifica che il file sia stato creato
+   if [ ! -f "$CONFIG_FILE" ]; then
+     echo "--- ERRORE CRITICO MAUTIC ---"
+     echo "L'\''installazione è fallita: il file $CONFIG_FILE non è stato creato."
+     exit 1
+   fi
+   echo "[mautic] File di configurazione creato con successo."
+ else
+   echo "[mautic] Già installato: aggiorno lo schema."
+ fi
 
-# Site URL se disponibile
-if [ -n "${MAUTIC_BASE_URL}" ]; then
-  $PHP bin/console mautic:config:set --name=site_url --value="${MAUTIC_BASE_URL}" || true
-fi
+ # Comandi da eseguire sempre (migrazioni, cache, etc.)
+ echo "[mautic] Eseguo comandi di manutenzione..."
+ $PHP bin/console doctrine:migrations:migrate --no-interaction || true
+ $PHP bin/console mautic:plugins:reload --no-interaction || true
 
-$PHP bin/console cache:clear -n || true
-chown -R www-data:www-data /var/www/html || true
-'
+ # Aggiorna/Crea utente admin
+ if $PHP bin/console list 2>/dev/null | grep -q "mautic:user:create"; then
+   $PHP bin/console mautic:user:create \
+     -u "${MAUTIC_BOOTSTRAP_ADMIN_USER}" \
+     -p "${MAUTIC_BOOTSTRAP_ADMIN_PASS}" \
+     -e "${MAUTIC_BOOTSTRAP_ADMIN_EMAIL}" --role="Administrator" 2>/dev/null || echo "[mautic]
+ admin già esistente, non ricreato."
+ fi
 
-# Attendo HTTP “valido” (evita che la UI torni al wizard)
-wait_on_http "$MAUTIC_URL" 120 2 || true
+ # Site URL se disponibile
+ if [ -n "${MAUTIC_BASE_URL}" ]; then
+   $PHP bin/console mautic:config:set --name=site_url --value="${MAUTIC_BASE_URL}"
+no-interaction || true
+ fi
 
+ $PHP bin/console cache:clear --no-interaction || true
+ chown -R www-data:www-data /var/www/html || true
+ echo "[mautic] Configurazione Mautic completata."
+ '
 
-# prova HTTP e stampa log se serve
-echo "[bootstrap] Attendo Mautic (prima risposta valida)…"
-if ! mautic_http_ok; then
-  echo "Mautic non ancora pronto. Controllo log:"
-  docker compose exec -T mautic bash -lc '
-    for f in var/log/*.log 2>/dev/null; do
-      [ -f "$f" ] && { echo "==> $f"; tail -n 120 "$f"; }
-    done || true
-  ' || true
-fi
-
-# (opzionale) forza site_url se hai un dominio pubblico
-if [ -n "${MAUTIC_DOMAIN}" ]; then
-  echo "[bootstrap] Imposto Mautic site_url=https://${MAUTIC_DOMAIN}"
-  docker compose exec -T mautic bash -lc '
-    runuser -u www-data -- php bin/console \
-      mautic:config:set --name=site_url --value="https://'"$MAUTIC_DOMAIN"'" || true
-    runuser -u www-data -- php bin/console cache:clear -n || true
-  '
-fi
-
+ # Attendi che Mautic sia di nuovo raggiungibile dopo la configurazione
+ wait_on_http "$MAUTIC_URL_INTERNAL" 120 2 || true
 
 
 # 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
