@@ -6,7 +6,7 @@ description: "Cloudetta è un ecosistema digitale open-source e sovrano per PMI.
 image: "/assets/images/portfolio/cloudetta/cloudetta.jpg"
 image-header: "/assets/images/portfolio/cloudetta/cloudetta.jpg"
 image-paint: "/assets/images/portfolio/cloudetta/cloudetta.jpg"
-tags: [Open Source, DevOps, Cloud, Docker, Odoo, Django, Mautic, Apache Superset, Business Intelligence, n8n, Prometheus, Grafana, Loki, CrowdSec, Restic, System Architecture, SaaS]
+tags: [Open Source, DevOps, Cloud, Docker, Odoo, Django, Mautic, Apache Superset, Business Intelligence, n8n, Prometheus, Grafana, Loki, CrowdSec, Restic, System Architecture, SaaS, Mermaid]
 ---
 
 > "L'obiettivo di Cloudetta non è fornire software, ma restituire sovranità. È un ecosistema digitale integrato, open-source e self-hosted, che permette alle aziende di possedere e controllare i propri strumenti e i propri dati, liberandosi dal vendor lock-in."
@@ -18,6 +18,114 @@ tags: [Open Source, DevOps, Cloud, Docker, Odoo, Django, Mautic, Apache Superset
 Cloudetta nasce per risolvere la frammentazione che affligge le PMI: decine di servizi cloud disconnessi, costi mensili crescenti e dati aziendali sparsi presso terzi. La piattaforma aggrega i migliori strumenti open-source in un unico **stack coerente e pre-integrato**, orchestrato da Docker e installabile su qualsiasi infrastruttura (cloud, on-premise, VPS).
 
 Il risultato è un ambiente di lavoro centralizzato, dove i processi fluiscono senza interruzioni tra i vari reparti, dall'ERP al marketing, dalla collaborazione alla business intelligence.
+
+---
+
+## Diagramma Architetturale Interattivo
+
+Questo diagramma mostra come i vari componenti di Cloudetta interagiscono tra loro, dal gateway di ingresso fino ai servizi di backend e agli stack operativi.
+
+```mermaid
+graph TD
+    subgraph Utente
+        Client[Browser / Client API]
+    end
+
+    subgraph "Gateway & Sicurezza"
+        Caddy(Caddy Reverse Proxy)
+        CrowdSec(CrowdSec IPS)
+    end
+
+    subgraph "Applicazioni Core"
+        Django(Django + Stripe)
+        Odoo(Odoo ERP)
+        Mautic(Mautic)
+        Mattermost(Mattermost)
+        Nextcloud(Nextcloud)
+        Redmine(Redmine)
+        DokuWiki(DokuWiki)
+    end
+
+    subgraph "Business Intelligence & Analytics"
+        Superset(Apache Superset)
+        Analytics(Analytics Cookieless)
+    end
+    
+    subgraph "Automazione"
+        N8N(n8n Workflow)
+    end
+
+    subgraph "Database"
+        PostgresOdoo[(PostgreSQL - Odoo)]
+        PostgresDjango[(PostgreSQL - Django)]
+        PostgresMattermost[(PostgreSQL - Mattermost)]
+        MariaDBNextcloud[(MariaDB - Nextcloud)]
+        MariaDBMautic[(MariaDB - Mautic)]
+        MariaDBRedmine[(MariaDB - Redmine)]
+    end
+
+    subgraph "Stack di Osservabilità"
+        Grafana(Grafana)
+        Prometheus(Prometheus)
+        Loki(Loki)
+        Promtail(Promtail)
+    end
+
+    subgraph "Backup & Storage"
+        Restic(Restic Backup)
+        MinIO(MinIO S3 Storage)
+    end
+
+    %% Connessioni Principali
+    Client --> Caddy
+    Caddy --> Django
+    Caddy --> Odoo
+    Caddy --> Mautic
+    Caddy --> Mattermost
+    Caddy --> Nextcloud
+    Caddy --> Redmine
+    Caddy --> DokuWiki
+    Caddy --> Superset
+    Caddy --> Grafana
+    Caddy --> Analytics
+
+    %% Connessioni Database
+    Django --> PostgresDjango
+    Odoo --> PostgresOdoo
+    Mattermost --> PostgresMattermost
+    Nextcloud --> MariaDBNextcloud
+    Mautic --> MariaDBMautic
+    Redmine --> MariaDBRedmine
+    Superset --> PostgresOdoo
+    Superset --> PostgresDjango
+    Superset --> MariaDBMautic
+
+    %% Connessioni Automazione (n8n)
+    N8N -.-> Django
+    N8N -.-> Odoo
+    N8N -.-> Mautic
+    N8N -.-> Mattermost
+    N8N -.-> Nextcloud
+    N8N -.-> Redmine
+    
+    %% Connessioni Operative (Logging, Monitoring, Sicurezza, Backup)
+    Caddy -- Log --> CrowdSec
+    Caddy -- Log --> Promtail
+    Promtail -- Log --> Loki
+    Loki --> Grafana
+    Prometheus --> Grafana
+    Django -- Metriche & Log --> Prometheus & Promtail
+    Odoo -- Metriche & Log --> Prometheus & Promtail
+    Restic -- Backup dei Volumi --> MinIO
+    
+end
+```
+
+<!-- Caricamento di Mermaid.js e inizializzazione solo per questa pagina -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true });
+</script>
 
 ---
 
