@@ -171,3 +171,12 @@ andiamo più in profondità analizza i files .env docker-compose.yml e bootstrap
 
 ~\Documents\GitHub\clodetta_qwen          no sandbox (see /docs)           gemini-2.5-pro (97% context left)
 
+
+
+# rendere tutti i tool selezionabili in fase di bootstrap/deploy
+# agiunggere apache superset
+# aggiungere un analytics cookieless
+# aggiungere un tool per la gestione delle secret (hashicorp vault?)
+# aggiungere un tool per la gestione della CI/CD (gitlab + gitlab-runner)
+# aggiungere un tool per la gestione del tracing (jaeger o grafana tempo)
+# aggiungere un tool per la gestione dell'SSO (authelia?)

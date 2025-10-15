@@ -1,5 +1,10 @@
-#manca apache superset da inerire
- manca un analytics cookieless
+# rendere tutti i tool selezionabili in fase di bootstrap/deploy
+# agiunggere apache superset
+# aggiungere un analytics cookieless
+# aggiungere un tool per la gestione delle secret (hashicorp vault?)
+# aggiungere un tool per la gestione della CI/CD (gitlab + gitlab-runner)
+# aggiungere un tool per la gestione del tracing (jaeger o grafana tempo)
+# aggiungere un tool per la gestione dell'SSO (authelia?)
 
 
 grandissimo — ti propongo un’estensione “pulita” del tuo stack usando **profili Compose** dedicati, così puoi accendere/spegnere i blocchi a piacere:
