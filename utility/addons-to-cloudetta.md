@@ -1,4 +1,5 @@
 #manca apache superset da inerire
+ manca un analytics cookieless
 
 
 grandissimo — ti propongo un’estensione “pulita” del tuo stack usando **profili Compose** dedicati, così puoi accendere/spegnere i blocchi a piacere:
