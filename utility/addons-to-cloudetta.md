@@ -7,6 +7,136 @@
 # aggiungere un tool per la gestione dell'SSO (authelia?)
 
 
+
+
+
+
+Sì, ha senso — dipende da cosa vuoi ottenere.
+
+## È gratis?
+
+* **OpenVPN “community”** è open-source e gratuito (GPL).
+* **OpenVPN Access Server** (immagine “openvpn-as”) è freemium: gratis fino a 2 connessioni simultanee, poi serve licenza.
+  Nel tuo caso userei **OpenVPN community** oppure, se vuoi qualcosa di più moderno/semplice/veloce, **WireGuard**.
+
+## Quando ti serve nel tuo stack
+
+Ti è utile se vuoi:
+
+* **Accedere ai servizi interni** senza esporli su Internet (es. Grafana, Prometheus, Redmine admin, DB, …).
+* **Manutenzione del host Docker** (SSH/Ansible) passando per una rete privata.
+* **Site-to-site** tra due installazioni Cloudetta (repliche, backup, integrazioni).
+* **Accesso mobile** (laptop/telefono) a `*.localhost` interni o a reti private quando sei fuori ufficio.
+* **Whitelist per team**: invece di aprire porte al mondo + WAF, tieni i pannelli solo su VPN.
+
+Se invece tutti i servizi che ti servono sono già dietro **Caddy + HTTPS + SSO (Keycloak) + CrowdSec** e devono essere pubblici per utenti/cliente, **una VPN potrebbe essere superflua** per loro; resta però ottima per i **pannelli di amministrazione** e per i **DB**.
+
+## Integrazione rapida con OpenVPN (community)
+
+Se vuoi aggiungerla, ecco lo schema tipico (conciso):
+
+1. **Service nel compose** (usa l’UDP 1194; richiede TUN e NET_ADMIN):
+
+```yaml
+openvpn:
+  image: kylemanna/openvpn
+  container_name: openvpn
+  cap_add: [NET_ADMIN]
+  devices: ["/dev/net/tun:/dev/net/tun"]
+  ports: ["1194:1194/udp"]
+  volumes:
+    - openvpn_data:/etc/openvpn
+  restart: unless-stopped
+  networks: [ internal ]
+```
+
+2. **Init del server** (una tantum, da shell):
+
+```bash
+# scegli il tuo FQDN/IP pubblico
+OVPN_FQDN=vpn.example.com
+
+# genera configurazione (UDP, porta 1194)
+docker run --rm -v $(pwd)/ovpn:/etc/openvpn kylemanna/openvpn ovpn_genconfig -u udp://$OVPN_FQDN
+
+# inizializza PKI (ti chiede una passphrase per la CA)
+docker run --rm -it -v $(pwd)/ovpn:/etc/openvpn kylemanna/openvpn ovpn_initpki
+
+# sposta i file nel volume del compose (se usi volume named openvpn_data)
+docker volume create cloudetta_openvpn_data
+docker run --rm -v cloudetta_openvpn_data:/etc/openvpn -v $(pwd)/ovpn:/src alpine sh -c 'cp -a /src/* /etc/openvpn/'
+```
+
+3. **Route verso la rete Docker interna**
+   Scopri la subnet del bridge `internal`:
+
+```bash
+docker network inspect cloudetta_internal | grep Subnet
+# es. 172.19.0.0/16 (annotala)
+```
+
+Rigenera la config aggiungendo la route pushata ai client:
+
+```bash
+docker run --rm -v $(pwd)/ovpn:/etc/openvpn kylemanna/openvpn \
+  ovpn_genconfig -u udp://$OVPN_FQDN -p "route 172.19.0.0 255.255.0.0"
+```
+
+(ricopia i file nel volume come al punto 2, oppure fai l’operazione direttamente sul volume.)
+
+4. **Avvia il container**:
+
+```bash
+docker compose up -d openvpn
+```
+
+5. **Abilita IP forwarding sul host**:
+
+```bash
+sudo sysctl -w net.ipv4.ip_forward=1
+```
+
+6. **(Se necessario) NAT tra VPN e rete Docker**
+   Se i client non raggiungono i container, aggiungi una regola MASQUERADE sul host (adatta le CIDR):
+
+```bash
+# supponendo rete VPN 10.8.0.0/24 (default OpenVPN) e Docker 172.19.0.0/16
+sudo iptables -t nat -A POSTROUTING -s 10.8.0.0/24 -d 172.19.0.0/16 -j MASQUERADE
+```
+
+7. **Crea un profilo client**:
+
+```bash
+CLIENT=alice
+docker compose exec openvpn easyrsa build-client-full $CLIENT nopass
+docker compose exec openvpn ovpn_getclient $CLIENT > $CLIENT.ovpn
+```
+
+Importa `$CLIENT.ovpn` nel client OpenVPN di PC/telefono.
+
+> Nota: evita l’immagine **`linuxserver/openvpn-as`** se non vuoi i limiti della versione Access Server. Quella “community” è **`kylemanna/openvpn`** (o alternative simili).
+
+## Valuta WireGuard come alternativa
+
+Se non hai vincoli a usare OpenVPN, **WireGuard** (es. immagine `linuxserver/wireguard`) è:
+
+* più semplice da configurare,
+* molto performante,
+* ottimo per mobile.
+  La logica di routing è identica: abiliti IP forwarding, pubblichi 51820/udp, pushi la route verso `cloudetta_internal`.
+
+---
+
+Se vuoi, ti preparo subito il blocco Compose completo (OpenVPN **o** WireGuard) già allineato alle tue subnet e ai profili, così lo incolli senza toccare il resto.
+
+
+
+
+
+
+
+
+
 grandissimo — ti propongo un’estensione “pulita” del tuo stack usando **profili Compose** dedicati, così puoi accendere/spegnere i blocchi a piacere:
 
 * `sso` → Keycloak (+ Postgres dedicato)
