@@ -426,6 +426,8 @@ services:
       - ./backups:/backups
       - /var/run/docker.sock:/var/run/docker.sock
       - ./backup/backup.sh:/backup/backup.sh:ro
+      - superset_db:/superset_db
+      - superset_home:/superset_home
     entrypoint: ["/bin/sh","-c","apk add --no-cache bash postgresql-client mariadb-client tar gzip && echo '0 2 * * * /backup/backup.sh >> /backups/backup.log 2>&1' | crontab - && crond -f"]
     networks: [ internal ]
 
@@ -687,14 +689,14 @@ services:
       POSTGRES_USER: superset
       POSTGRES_PASSWORD: ${SUPERSET_ADMIN_PASS}
     volumes:
-      - superset-db-data:/var/lib/postgresql/data
+      - superset_db:/var/lib/postgresql/data
     networks: [ internal ]
     healthcheck:
       test: ["CMD-SHELL","pg_isready -U superset -h 127.0.0.1 -d superset"]
       interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["analytics"]
+    profiles: ["bi"]
 
   superset-redis:
     image: redis:7-alpine
@@ -705,10 +707,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["analytics"]
+    profiles: ["bi"]
 
   superset-init:
-    image: apache/superset:latest
+    image: apache/superset:3.1.2
     container_name: superset-init
     depends_on:
       superset-db: { condition: service_healthy }
@@ -728,25 +730,28 @@ services:
       SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
       SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL}
       SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASS}
+    volumes:
+      - superset_home:/app/superset_home
     networks: [ internal ]
-    command: >
-      /bin/bash -lc "
-        superset db upgrade &&
-        superset fab create-admin
-          --username ${SUPERSET_ADMIN_USER}
-          --firstname Admin
-          --lastname User
-          --email ${SUPERSET_ADMIN_EMAIL}
-          --password ${SUPERSET_ADMIN_PASS} || true &&
-        superset init
-      "
+    entrypoint: ["/bin/sh","-lc"]
+    command: |
+      superset db upgrade && \
+      ( superset fab create-admin \
+          --username "${SUPERSET_ADMIN_USER}" \
+          --firstname "Admin" \
+          --lastname "User" \
+          --email "${SUPERSET_ADMIN_EMAIL}" \
+          --password "${SUPERSET_ADMIN_PASS}" || true ) && \
+      superset init
     restart: "no"
-    profiles: ["analytics"]
+    profiles: ["bi"]
 
   superset:
-    image: apache/superset:latest
+    image: apache/superset:3.1.2
     container_name: superset
     depends_on:
+      superset-db: { condition: service_healthy }
+      superset-redis: { condition: service_healthy }
       superset-init: { condition: service_completed_successfully }
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
@@ -756,13 +761,15 @@ services:
       DATABASE_HOST: superset-db
       REDIS_HOST: superset-redis
       REDIS_PORT: 6379
+    volumes:
+      - superset_home:/app/superset_home
     networks: [ internal ]
     healthcheck:
       test: ["CMD-SHELL","wget -qO- http://localhost:8088/health || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 20
-    profiles: ["analytics"]
+    profiles: ["bi"]
     # se NON usi Caddy in locale, puoi esporre:
     # ports: ["8088:8088"]
 
@@ -794,6 +801,7 @@ services:
       NODE_ENV: production
       TRACKING_SCRIPT_NAME: script.js
       DISABLE_TELEMETRY: "1"
+      HASH_SALT: ${UMAMI_HASH_SALT}
       # opzionale per URL assoluti:
       # UMAMI_APP_URL: https://${UMAMI_DOMAIN}
     networks: [ internal ]
@@ -840,5 +848,6 @@ volumes:
   glitchtip_db:
   minio_data:
   crowdsec_data:
-  superset-db-data:
+  superset_db:
+  superset_home:
   umami-db-data:

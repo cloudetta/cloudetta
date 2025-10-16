@@ -19,6 +19,7 @@ cd ..
 rm -rf cloudetta
 ```
 ```bash
+cd cloudetta
 sed -i 's/\r$//' .env
 sed -i 's/\r$//' bootstrap_cloudetta.sh
 sed -i 's/\r$//' install.sh

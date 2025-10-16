@@ -474,6 +474,80 @@ no-interaction || true
  # Attendi che Mautic sia di nuovo raggiungibile dopo la configurazione
  wait_on_http "$MAUTIC_URL_INTERNAL" 120 2 || true
 
+# 4f) Superset — admin = ADMIN_* (idempotente)
+echo "[bootstrap] Configuro Superset…"
+
+# Se hai un DB dedicato (es. superset-db Postgres), attendi prima il DB
+if docker compose ps superset-db >/dev/null 2>&1; then
+  wait_on_postgres superset-db 120 2 || true
+fi
+
+# Attendi HTTP interno (Superset espone /health su 8088)
+if docker compose ps superset >/dev/null 2>&1; then
+  wait_on_http "http://superset:8088/health" 180 2 || true
+
+  docker compose exec -T superset bash -lc '
+    set -e
+    # migrazioni DB + admin idempotente
+    superset db upgrade
+
+    # create-admin fallisce se esiste, gestiamo con || true
+    superset fab create-admin \
+      --username "'"${ADMIN_USER}"'" \
+      --firstname "Admin" \
+      --lastname "Cloudetta" \
+      --email "'"${ADMIN_EMAIL}"'" \
+      --password "'"${ADMIN_PASS}"'" || true
+
+    superset init
+  ' || echo "WARN: configurazione Superset non completata (controlla i log)."
+else
+  echo "INFO: servizio 'superset' non presente/attivo nello stack: salto."
+fi
+
+# 4f) Superset — admin = ADMIN_* (idempotente)
+echo "[bootstrap] Configuro Superset…"
+
+# Se hai un DB dedicato (es. superset-db Postgres), attendi prima il DB
+if docker compose ps superset-db >/dev/null 2>&1; then
+  wait_on_postgres superset-db 120 2 || true
+fi
+
+# Attendi HTTP interno (Superset espone /health su 8088)
+if docker compose ps superset >/dev/null 2>&1; then
+  wait_on_http "http://superset:8088/health" 180 2 || true
+
+  docker compose exec -T superset bash -lc '
+    set -e
+    # migrazioni DB + admin idempotente
+    superset db upgrade
+
+    # create-admin fallisce se esiste, gestiamo con || true
+    superset fab create-admin \
+      --username "'"${ADMIN_USER}"'" \
+      --firstname "Admin" \
+      --lastname "Cloudetta" \
+      --email "'"${ADMIN_EMAIL}"'" \
+      --password "'"${ADMIN_PASS}"'" || true
+
+    superset init
+  ' || echo "WARN: configurazione Superset non completata (controlla i log)."
+else
+  echo "INFO: servizio 'superset' non presente/attivo nello stack: salto."
+fi
+
+# 4f) Umami — attende DB e HTTP (idempotente)
+echo "[bootstrap] Verifico Umami…"
+if docker compose ps umami-db >/dev/null 2>&1; then
+  wait_on_postgres umami-db 120 2 || true
+fi
+if docker compose ps umami >/dev/null 2>&1; then
+  wait_on_http "http://umami:3000" 180 2 || true
+else
+  echo "INFO: servizio 'umami' non presente/attivo nello stack: salto."
+fi
+
+
 
 # 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
 echo "[bootstrap] Configuro Mattermost…"
@@ -498,10 +572,10 @@ mm config reload >/dev/null 2>&1 || true
 if ! mm user list | awk '"'"'{print tolower($2)}'"'"' | grep -qx "$(echo "'"${MATTERMOST_ADMIN_EMAIL}"'" | tr '"'"'A-Z'"'"' '"'"'a-z'"'"')"; then
   echo " - creo utente admin ${MATTERMOST_ADMIN_EMAIL}…"
   mm user create \
-    --email "'"${MATTERMOST_ADMIN_EMAIL}"'" \
-    --username "'"${MATTERMOST_ADMIN_USER}"'" \
-    --password "'"${MATTERMOST_ADMIN_PASS}"'" \
-    --system_admin >/dev/null
+    --email "$MATTERMOST_ADMIN_EMAIL" \
+    --username "$MATTERMOST_ADMIN_USER" \
+    --password "$MATTERMOST_ADMIN_PASS" \
+    --system-admin >/dev/null
 else
   echo " - utente admin già presente"
   # opzionale: forza password/email (idempotente, non fallire se non cambia)
@@ -512,9 +586,8 @@ fi
 if ! mm team list | awk '"'"'{print $2}'"'"' | grep -qx "'"${MATTERMOST_TEAM_NAME}"'"; then
   echo " - creo team ${MATTERMOST_TEAM_NAME}…"
   mm team create \
-    --name "'"${MATTERMOST_TEAM_NAME}"'" \
-    --display_name "'"${MATTERMOST_TEAM_DISPLAY}"'" \
-    --type open >/dev/null
+    --name "$MATTERMOST_TEAM_NAME" \
+    --display_name "$MATTERMOST_TEAM_DISPLAY" >/dev/null
 else
   echo " - team già presente"
 fi
