@@ -100,10 +100,10 @@ http://errors.localhost {
   log
 }
 
-superset.localhost {
+http://superset.localhost {
     reverse_proxy superset:8088
 }
 
-analytics.localhost {
+http://analytics.localhost {
     reverse_proxy umami:3000
 }
