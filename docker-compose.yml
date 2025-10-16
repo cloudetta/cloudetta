@@ -66,6 +66,9 @@ services:
       MINIO_DOMAIN: ${MINIO_DOMAIN}
       COLLABORA_DOMAIN: ${COLLABORA_DOMAIN}
       CROWDSEC_DOMAIN: ${CROWDSEC_DOMAIN}
+      SUPERSET_DOMAIN: ${SUPERSET_DOMAIN}
+      UMAMI_DOMAIN: ${UMAMI_DOMAIN}
+
     entrypoint: ["/bin/sh","-lc","apt-get update && apt-get install -y --no-install-recommends gettext-base && /entrypoint.sh prod"]
     networks: [ web, internal ]
     healthcheck:
@@ -675,6 +678,135 @@ services:
     entrypoint: ["/bin/sh","-lc","echo '30 4 * * * /usr/local/bin/trivy image --severity HIGH,CRITICAL --format table --output /reports/images_$(date +\\%F).txt $(/usr/local/bin/docker images --format {{.Repository}}:{{.Tag}} | tr \"\\n\" \" \")' | crontab - && crond -f"]
     networks: [ internal ]
 
+  # ==================== SUPERSET (profilo: analytics) ====================
+  superset-db:
+    image: postgres:15
+    container_name: superset-db
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${SUPERSET_ADMIN_PASS}
+    volumes:
+      - superset-db-data:/var/lib/postgresql/data
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U superset -h 127.0.0.1 -d superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    profiles: ["analytics"]
+
+  superset-redis:
+    image: redis:7-alpine
+    container_name: superset-redis
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD","redis-cli","ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    profiles: ["analytics"]
+
+  superset-init:
+    image: apache/superset:latest
+    container_name: superset-init
+    depends_on:
+      superset-db: { condition: service_healthy }
+      superset-redis: { condition: service_healthy }
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      # DB app
+      DATABASE_DB: superset
+      DATABASE_USER: superset
+      DATABASE_PASSWORD: ${SUPERSET_ADMIN_PASS}
+      DATABASE_HOST: superset-db
+      # Cache
+      REDIS_HOST: superset-redis
+      REDIS_PORT: 6379
+      # bootstrap admin
+      SUPERSET_LOAD_EXAMPLES: "no"
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER}
+      SUPERSET_ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASS}
+    networks: [ internal ]
+    command: >
+      /bin/bash -lc "
+        superset db upgrade &&
+        superset fab create-admin
+          --username ${SUPERSET_ADMIN_USER}
+          --firstname Admin
+          --lastname User
+          --email ${SUPERSET_ADMIN_EMAIL}
+          --password ${SUPERSET_ADMIN_PASS} || true &&
+        superset init
+      "
+    restart: "no"
+    profiles: ["analytics"]
+
+  superset:
+    image: apache/superset:latest
+    container_name: superset
+    depends_on:
+      superset-init: { condition: service_completed_successfully }
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      DATABASE_DB: superset
+      DATABASE_USER: superset
+      DATABASE_PASSWORD: ${SUPERSET_ADMIN_PASS}
+      DATABASE_HOST: superset-db
+      REDIS_HOST: superset-redis
+      REDIS_PORT: 6379
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:8088/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    profiles: ["analytics"]
+    # se NON usi Caddy in locale, puoi esporre:
+    # ports: ["8088:8088"]
+
+  # ==================== UMAMI (profilo: analytics) ====================
+  umami-db:
+    image: postgres:15
+    container_name: umami-db
+    environment:
+      POSTGRES_DB: umami
+      POSTGRES_USER: umami
+      POSTGRES_PASSWORD: ${UMAMI_DB_PASSWORD}
+    volumes:
+      - umami-db-data:/var/lib/postgresql/data
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","pg_isready -U umami -h 127.0.0.1 -d umami"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    profiles: ["analytics"]
+
+  umami:
+    image: ghcr.io/umami-software/umami:postgresql-latest
+    container_name: umami
+    depends_on:
+      umami-db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://umami:${UMAMI_DB_PASSWORD}@umami-db:5432/umami
+      NODE_ENV: production
+      TRACKING_SCRIPT_NAME: script.js
+      DISABLE_TELEMETRY: "1"
+      # opzionale per URL assoluti:
+      # UMAMI_APP_URL: https://${UMAMI_DOMAIN}
+    networks: [ internal ]
+    healthcheck:
+      test: ["CMD-SHELL","wget -qO- http://localhost:3000 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    profiles: ["analytics"]
+    # se NON usi Caddy in locale, puoi esporre:
+    # ports: ["3000:3000"]
+
+
 volumes:
   caddy_data:
   caddy_config:
@@ -708,3 +840,5 @@ volumes:
   glitchtip_db:
   minio_data:
   crowdsec_data:
+  superset-db-data:
+  umami-db-data:

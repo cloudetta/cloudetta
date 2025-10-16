@@ -99,3 +99,11 @@ http://errors.localhost {
   reverse_proxy glitchtip:8000
   log
 }
+
+superset.localhost {
+    reverse_proxy superset:8088
+}
+
+analytics.localhost {
+    reverse_proxy umami:3000
+}
