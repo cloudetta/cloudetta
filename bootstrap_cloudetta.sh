@@ -692,7 +692,7 @@ Accessi interni:
 - n8n        → ${N8N_URL}              | BasicAuth: ${N8N_USER}/${N8N_PASS}
 - DokuWiki   → http://wiki.localhost   | (consigliato BasicAuth in Caddy)
 - Mattermost → ${MATTERMOST_URL}       | login: ${MATTERMOST_ADMIN_EMAIL}/${MATTERMOST_ADMIN_PASS} (team: ${MATTERMOST_TEAM_NAME})
-
+- Umamu  → amin umami
 Nextcloud:
 - trusted_domains = ${TRUSTED_DOMAINS}
 - overwrite.cli.url = ${PUBLIC_DOMAIN:-<non impostato>}
