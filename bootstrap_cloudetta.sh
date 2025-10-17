@@ -30,8 +30,8 @@ wait_on_http () {
   while [ "$tries" -gt 0 ]; do
     code=$(docker run --rm --network "${CNET:-bridge}" curlimages/curl -s -o /dev/null -w "%{http_code}" "$url" || true)
     echo "[wait] $url → $code  (restano $tries tentativi)"
-    # accettiamo 200/301/302/303/401/403/404
-    if echo "$code" | grep -qE '^(200|30[123]|401|403|404)$'; then return 0; fi
+    # accettiamo 200/301/302/303/307/401/403/404
+    if echo "$code" | grep -qE '^(200|30[1237]|401|403|404)$'; then return 0; fi
     tries=$((tries-1)); sleep "$sleep_s"
   done
   echo "Timeout aspettando $url (ultimo codice: $code)"; return 1
@@ -542,10 +542,12 @@ if docker compose ps umami-db >/dev/null 2>&1; then
   wait_on_postgres umami-db 120 2 || true
 fi
 if docker compose ps umami >/dev/null 2>&1; then
-  wait_on_http "http://umami:3000" 180 2 || true
+  # uso /login perché risponde 200 (la root spesso fa 307)
+  wait_on_http "http://umami:3000/login" 180 2 || true
 else
   echo "INFO: servizio 'umami' non presente/attivo nello stack: salto."
 fi
+
 
 
 

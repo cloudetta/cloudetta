@@ -717,6 +717,7 @@ services:
       superset-redis: { condition: service_healthy }
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_DATABASE_URI: postgresql+psycopg2://superset:${SUPERSET_ADMIN_PASS}@superset-db:5432/superset
       # DB app
       DATABASE_DB: superset
       DATABASE_USER: superset
@@ -755,6 +756,7 @@ services:
       superset-init: { condition: service_completed_successfully }
     environment:
       SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SUPERSET_DATABASE_URI: postgresql+psycopg2://superset:${SUPERSET_ADMIN_PASS}@superset-db:5432/superset
       DATABASE_DB: superset
       DATABASE_USER: superset
       DATABASE_PASSWORD: ${SUPERSET_ADMIN_PASS}
@@ -802,6 +804,8 @@ services:
       TRACKING_SCRIPT_NAME: script.js
       DISABLE_TELEMETRY: "1"
       HASH_SALT: ${UMAMI_HASH_SALT}
+      UMAMI_ADMIN_USERNAME: ${UMAMI_ADMIN_USERNAME}
+      UMAMI_ADMIN_PASSWORD: ${UMAMI_ADMIN_PASSWORD}
       # opzionale per URL assoluti:
       # UMAMI_APP_URL: https://${UMAMI_DOMAIN}
     networks: [ internal ]
