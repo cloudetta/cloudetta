@@ -1,0 +1,9 @@
+${SUPERSET_DOMAIN:+https://${SUPERSET_DOMAIN} {
+  import security_preset
+  reverse_proxy superset:8088
+}}
+
+${UMAMI_DOMAIN:+https://${UMAMI_DOMAIN} {
+  import security_preset
+  reverse_proxy umami:3000
+}}

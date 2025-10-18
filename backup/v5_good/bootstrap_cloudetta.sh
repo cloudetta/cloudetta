@@ -87,7 +87,6 @@ chmod 600 .env || true
 # carichiamo .env come sorgente di verità
 set -a; . ./.env; set +a
 
-
 # === 1b) Obbligatorie: devono essere presenti in .env =======================
 : "${ADMIN_USER:?metti ADMIN_USER in .env}"
 : "${ADMIN_PASS:?metti ADMIN_PASS in .env}"
@@ -158,23 +157,14 @@ if [ -z "${BOOTSTRAP_PROFILES:-}" ]; then
   fi
 fi
 
-# Costruisci gli argomenti --profile per base (local/prod), tool e extra
-ALL_PROFILES=""
-[ -n "${BOOTSTRAP_PROFILES:-}" ]       && ALL_PROFILES="$ALL_PROFILES ${BOOTSTRAP_PROFILES}"
-[ -n "${BOOTSTRAP_TOOL_PROFILES:-}" ]  && ALL_PROFILES="$ALL_PROFILES ${BOOTSTRAP_TOOL_PROFILES}"
-[ -n "${BOOTSTRAP_EXTRA_PROFILES:-}" ] && ALL_PROFILES="$ALL_PROFILES ${BOOTSTRAP_EXTRA_PROFILES}"
-
+# Costruisci gli argomenti --profile
 COMPOSE_PROFILES_ARGS=""
-for p in $ALL_PROFILES; do
+for p in ${BOOTSTRAP_PROFILES}; do
   COMPOSE_PROFILES_ARGS="$COMPOSE_PROFILES_ARGS --profile $p"
 done
 
-echo "[bootstrap] Profili scelti: ${ALL_PROFILES}"
+echo "[bootstrap] Profili scelti: ${BOOTSTRAP_PROFILES}"
 
-# === helper: verifica se un profilo è attivo tra quelli scelti
-has_tool() {
-  echo " $ALL_PROFILES " | grep -q " $1 "
-}
 # Evita che restino attivi entrambi i Caddy (uno per profilo)
 if echo " ${BOOTSTRAP_PROFILES} " | grep -q " local "; then
   docker compose rm -sf caddy-prod 2>/dev/null || true
@@ -187,10 +177,17 @@ fi
 echo "[bootstrap] Pull immagini Mautic…"
 docker compose pull mautic mautic-cron || true
 
-# Avvio/aggiorno lo stack (servizi senza profilo + tutti i profili scelti)
-echo "[bootstrap] Avvio/aggiorno docker compose… (profili: ${ALL_PROFILES})"
+# Avvio/aggiorno lo stack (servizi senza profilo + profili selezionati)
+echo "[bootstrap] Avvio/aggiorno docker compose… (profili: ${BOOTSTRAP_PROFILES})"
 docker compose $COMPOSE_PROFILES_ARGS up -d --remove-orphans
 
+# --- Avvio profili extra opzionali (es: "sso monitoring logging uptime") ---
+if [ -n "${BOOTSTRAP_EXTRA_PROFILES:-}" ]; then
+  EXTRA_ARGS=""
+  for p in ${BOOTSTRAP_EXTRA_PROFILES}; do EXTRA_ARGS="$EXTRA_ARGS --profile $p"; done
+  echo "[bootstrap] Avvio profili extra: ${BOOTSTRAP_EXTRA_PROFILES}"
+  docker compose $EXTRA_ARGS up -d --remove-orphans
+fi
 
 # Rileva/aggiorna la rete internal del compose (serve a curl_net/wait_on_*)
 CNET="$(detect_compose_net || true)"
@@ -205,40 +202,33 @@ MAUTIC_URL="${MAUTIC_URL:-http://mautic:80}"
 MATTERMOST_URL="${MATTERMOST_URL:-http://mattermost:8065}"
 
 echo "[bootstrap] Attendo servizi…"
-has_tool n8n       && wait_on_http "$N8N_URL" 120 2 || true
-has_tool nextcloud && wait_on_http "$NEXTCLOUD_URL" 120 2 || true
+wait_on_http "$N8N_URL" 120 2 || true
+wait_on_http "$NEXTCLOUD_URL" 120 2 || true
 
-if has_tool redmine; then
-  wait_on_mysql redmine-db "${REDMINE_ROOT_PW:-root}" 120 2 || true
+# Redmine DB -> init
+wait_on_mysql redmine-db "${REDMINE_ROOT_PW:-root}" 120 2 || true
 
-  echo "[bootstrap] Inizializzo DB Redmine (MariaDB)…"
-  docker compose exec -T redmine-db mariadb -uroot -p"${REDMINE_ROOT_PW:-root}" -e "
-    CREATE DATABASE IF NOT EXISTS redmine CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-    CREATE USER IF NOT EXISTS 'redmine'@'%' IDENTIFIED BY '${REDMINE_DB_PASSWORD}';
-    GRANT ALL PRIVILEGES ON redmine.* TO 'redmine'@'%';
-    FLUSH PRIVILEGES;
-  " || echo "WARN: inizializzazione Redmine DB fallita (continua lo stesso)."
+echo "[bootstrap] Inizializzo DB Redmine (MariaDB)…"
+docker compose exec -T redmine-db mariadb -uroot -p"${REDMINE_ROOT_PW:-root}" -e "
+  CREATE DATABASE IF NOT EXISTS redmine CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+  CREATE USER IF NOT EXISTS 'redmine'@'%' IDENTIFIED BY '${REDMINE_DB_PASSWORD}';
+  GRANT ALL PRIVILEGES ON redmine.* TO 'redmine'@'%';
+  FLUSH PRIVILEGES;
+" || echo "WARN: inizializzazione Redmine DB fallita (continua lo stesso)."
 
-  echo "[bootstrap] Riavvio Redmine con SECRET da .env…"
-  docker compose up -d --force-recreate --no-deps redmine || true
-  wait_on_http "$REDMINE_URL" 180 2 || true
+echo "[bootstrap] Riavvio Redmine con SECRET da .env…"
+docker compose up -d --force-recreate --no-deps redmine || true
+wait_on_http "$REDMINE_URL" 180 2 || true
 
-  echo "[bootstrap] Imposto password/email admin Redmine…"
-  docker compose exec -T \
-    -e ADMIN_EMAIL="$ADMIN_EMAIL" \
-    -e ADMIN_PASS="$ADMIN_PASS" \
-    redmine bash -lc '... rails runner ...' || true
+# Django DB → migrate → superuser
+wait_on_postgres django-db 120 2 || true
+for i in $(seq 1 10); do
+  if docker compose exec -T django bash -lc 'python manage.py migrate --noinput'; then
+    break
+  fi
+  sleep 2
+done
 
-  echo "[bootstrap] Genero API key Redmine…"
-  # (lascia il tuo blocco esistente che salva REDMINE_API_KEY)
-fi
-
-if has_tool django; then
-  wait_on_postgres django-db 120 2 || true
-  for i in $(seq 1 10); do
-    if docker compose exec -T django bash -lc 'python manage.py migrate --noinput'; then break; fi
-    sleep 2
-  done
 # === 4) Configurazioni applicative ===========================================
 # 4a) Django superuser (NO fallback: usa solo ENV)
 echo "[bootstrap] Configuro Django superuser…"
@@ -265,8 +255,7 @@ try:
 except Exception as e:
     print("WARN Django:", e, file=sys.stderr)
 PY
-fi
-if has_tool nextcloud; then
+
 # 4b) Nextcloud: install + reset pass + trusted_domains
 echo "[bootstrap] Configuro/Installo Nextcloud…"
 docker compose exec -T nextcloud bash -lc '
@@ -301,8 +290,7 @@ if [ -n "'"${PUBLIC_DOMAIN:-}"'" ]; then
   runuser -u www-data -- $PHP occ config:system:set overwrite.cli.url --value "https://'"${PUBLIC_DOMAIN}"'"
 fi
 ' || echo "WARN: configurazione Nextcloud non riuscita (occ)."
-fi
-if has_tool odoo; then
+
 # 4c) Odoo: master password + crea DB con demo (solo se manca)
 echo "[bootstrap] Configuro Odoo (master password + DB demo)…"
 : "${ADMIN_EMAIL:?metti ADMIN_EMAIL in .env}"
@@ -342,9 +330,7 @@ else
     --data-urlencode "country_code=" \
     --data-urlencode "demo=${ODOO_DEMO}" >/dev/null || true
 fi
-fi
-if has_tool redmine; then
- # --- ===
+
 # 4d) Redmine: sincronizza admin (pass/email) e ottieni API key
 echo "[bootstrap] Imposto password/email admin Redmine…"
 docker compose exec -T \
@@ -400,8 +386,7 @@ else
   echo "[bootstrap] ATTENZIONE: impossibile ottenere la API key di Redmine in automatico."
   echo "            Inseriscila manualmente in .env (REDMINE_API_KEY) e rilancia."
 fi
-fi
-if has_tool mautic; then
+
  # --- 4e) Mautic (v6) — install CLI no-wizard + fix idempotenti ---
  echo "[bootstrap] Configuro Mautic…"
  wait_on_mysql mautic-db "${MAUTIC_ROOT_PW:-dev_mautic_root_pw}" 120 2 || true
@@ -477,7 +462,8 @@ if has_tool mautic; then
 
  # Site URL se disponibile
  if [ -n "${MAUTIC_BASE_URL}" ]; then
-   $PHP bin/console mautic:config:set --name=site_url --value="${MAUTIC_BASE_URL}" --no-interaction || true
+   $PHP bin/console mautic:config:set --name=site_url --value="${MAUTIC_BASE_URL}"
+no-interaction || true
  fi
 
  $PHP bin/console cache:clear --no-interaction || true
@@ -487,9 +473,7 @@ if has_tool mautic; then
 
  # Attendi che Mautic sia di nuovo raggiungibile dopo la configurazione
  wait_on_http "$MAUTIC_URL_INTERNAL" 120 2 || true
-fi
 
-if has_tool bi; then
 # 4f) Superset — admin = ADMIN_* (idempotente)
 echo "[bootstrap] Configuro Superset…"
 
@@ -520,8 +504,38 @@ if docker compose ps superset >/dev/null 2>&1; then
 else
   echo "INFO: servizio 'superset' non presente/attivo nello stack: salto."
 fi
+
+# 4f) Superset — admin = ADMIN_* (idempotente)
+echo "[bootstrap] Configuro Superset…"
+
+# Se hai un DB dedicato (es. superset-db Postgres), attendi prima il DB
+if docker compose ps superset-db >/dev/null 2>&1; then
+  wait_on_postgres superset-db 120 2 || true
 fi
-if has_tool analytics; then
+
+# Attendi HTTP interno (Superset espone /health su 8088)
+if docker compose ps superset >/dev/null 2>&1; then
+  wait_on_http "http://superset:8088/health" 180 2 || true
+
+  docker compose exec -T superset bash -lc '
+    set -e
+    # migrazioni DB + admin idempotente
+    superset db upgrade
+
+    # create-admin fallisce se esiste, gestiamo con || true
+    superset fab create-admin \
+      --username "'"${ADMIN_USER}"'" \
+      --firstname "Admin" \
+      --lastname "Cloudetta" \
+      --email "'"${ADMIN_EMAIL}"'" \
+      --password "'"${ADMIN_PASS}"'" || true
+
+    superset init
+  ' || echo "WARN: configurazione Superset non completata (controlla i log)."
+else
+  echo "INFO: servizio 'superset' non presente/attivo nello stack: salto."
+fi
+
 # 4f) Umami — attende DB e HTTP (idempotente)
 echo "[bootstrap] Verifico Umami…"
 if docker compose ps umami-db >/dev/null 2>&1; then
@@ -535,9 +549,8 @@ else
 fi
 
 
-fi
 
-if has_tool mattermost; then
+
 # 4f) Mattermost: admin, team, siteurl (idempotente, via mmctl --local)
 echo "[bootstrap] Configuro Mattermost…"
 
@@ -589,9 +602,7 @@ mm config reload >/dev/null 2>&1 || true
 
 echo " - Mattermost pronto."
 ' || echo "WARN: configurazione Mattermost non completata (verifica i log)."
-fi
 
-if has_tool n8n; then
 # === 5) Integrazioni n8n (inline) ============================================
 echo "[bootstrap] Configuro integrazioni n8n…"
 DJANGO_URL="${DJANGO_URL:-http://django:8000}"
@@ -663,8 +674,7 @@ JSON
 create_n8n_workflow "Odoo_to_Django" "$Odoo_to_Django"
 
 echo "[bootstrap] Integrazioni n8n: base impostata."
-fi
-# === 6) Riepilogo =============================================================
+
 # === 6) Riepilogo =============================================================
 cat <<INFO
 
@@ -676,44 +686,15 @@ Credenziali amministratore (unificate):
 - EMAIL:  ${ADMIN_EMAIL}
 
 Accessi interni:
-INFO
-
-has_tool django     && echo "- Django       → ${DJANGO_URL}            | login: ${DJANGO_ADMIN_USER}/${DJANGO_ADMIN_PASS}"
-has_tool redmine    && echo "- Redmine      → ${REDMINE_URL}           | login: admin/${ADMIN_PASS}"
-has_tool nextcloud  && echo "- Nextcloud    → ${NEXTCLOUD_URL}         | login: ${NEXTCLOUD_ADMIN_USER}/${NEXTCLOUD_ADMIN_PASS}"
-has_tool odoo       && echo "- Odoo         → ${ODOO_URL}              | login: ${ADMIN_EMAIL}/${ADMIN_PASS}  (DB: ${ODOO_DB})"
-has_tool mautic     && echo "- Mautic       → ${MAUTIC_URL}            | login: ${ADMIN_USER}/${ADMIN_PASS}"
-has_tool n8n        && echo "- n8n          → ${N8N_URL}               | BasicAuth: ${N8N_USER}/${N8N_PASS}"
-has_tool wiki       && echo "- DokuWiki     → ${DOKUWIKI_URL}          | (consigliato BasicAuth via Caddy)"
-has_tool mattermost && echo "- Mattermost   → ${MATTERMOST_URL}        | login: ${MATTERMOST_ADMIN_EMAIL}/${MATTERMOST_ADMIN_PASS} (team: ${MATTERMOST_TEAM_NAME})"
-has_tool analytics  && echo "- Umami        → ${UMAMI_URL}             | login: ${UMAMI_ADMIN_USERNAME}/${UMAMI_ADMIN_PASSWORD}"
-has_tool bi         && echo "- Superset     → ${SUPERSET_URL}          | login: ${SUPERSET_ADMIN_USER}/${SUPERSET_ADMIN_PASS}"
-
-# Monitoring
-has_tool monitoring  && echo "- Grafana      → ${GRAFANA_URL}           | login: ${PROM_ADMIN_USER}/${PROM_ADMIN_PASS}"
-has_tool monitoring  && echo "- Prometheus   → ${PROMETHEUS_URL}"
-has_tool monitoring  && echo "- Alertmanager → ${ALERTMANAGER_URL}"
-
-# Logging
-has_tool logging     && echo "- Loki (API)   → ${LOKI_URL}"
-
-# Uptime
-has_tool uptime      && echo "- Uptime-Kuma  → ${UPTIMEKUMA_URL}"
-
-# SSO
-has_tool sso         && echo "- Keycloak     → ${KEYCLOAK_URL}         | login: ${KEYCLOAK_ADMIN}/${KEYCLOAK_ADMIN_PASSWORD}"
-
-# Error tracking
-has_tool errors      && echo "- GlitchTip    → ${GLITCHTIP_URL}"
-
-# Backup (console MinIO)
-has_tool backup      && echo "- MinIO        → ${MINIO_CONSOLE_URL}    | login: ${MINIO_ROOT_USER}/${MINIO_ROOT_PASSWORD} (S3: ${MINIO_S3_URL})"
-
-# Office
-has_tool office      && echo "- Collabora    → ${COLLABORA_URL}"
-
-cat <<INFO
-
+- Django     → ${DJANGO_URL}           | login: ${DJANGO_ADMIN_USER}/${DJANGO_ADMIN_PASS}
+- Redmine    → ${REDMINE_URL}          | login: admin/${ADMIN_PASS}
+- Nextcloud  → ${NEXTCLOUD_URL}        | login: ${NEXTCLOUD_ADMIN_USER}/${NEXTCLOUD_ADMIN_PASS}
+- Odoo       → ${ODOO_URL}             | login: ${ADMIN_EMAIL}/${ADMIN_PASS}  (DB: ${ODOO_DB})
+- Mautic     → ${MAUTIC_URL}           | login: ${ADMIN_USER}/${ADMIN_PASS}
+- n8n        → ${N8N_URL}              | BasicAuth: ${N8N_USER}/${N8N_PASS}
+- DokuWiki   → http://wiki.localhost   | (consigliato BasicAuth in Caddy)
+- Mattermost → ${MATTERMOST_URL}       | login: ${MATTERMOST_ADMIN_EMAIL}/${MATTERMOST_ADMIN_PASS} (team: ${MATTERMOST_TEAM_NAME})
+- Umami  → amin umami
 Nextcloud:
 - trusted_domains = ${TRUSTED_DOMAINS}
 - overwrite.cli.url = ${PUBLIC_DOMAIN:-<non impostato>}
@@ -728,5 +709,9 @@ Mail (.env):
 - MAIL_PROVIDER=${MAIL_PROVIDER:-${MAIL_PROVIDER}}
 - MAIL_USER=${MAIL_USER:-${MAIL_USER}}
 - MAIL_PASS=******
+
+Mattermost:
+- SiteURL = ${MATTERMOST_SITEURL}
+- Team = ${MATTERMOST_TEAM_NAME} (${MATTERMOST_TEAM_DISPLAY})
 
 INFO

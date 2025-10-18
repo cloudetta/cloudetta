@@ -103,7 +103,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 15
-    profiles: ["django"]
 
   django-db:
     image: postgres:15
@@ -119,7 +118,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["django"]
 
   odoo:
     build: ./odoo
@@ -142,7 +140,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 15
-    profiles: ["odoo"]
 
   odoo-db:
     image: postgres:15
@@ -158,7 +155,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["odoo"]
 
   redis:
     image: redis:7.2.5
@@ -171,7 +167,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["odoo"]
 
   redmine:
     image: redmine:5.1.2
@@ -190,7 +185,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 15
-    profiles: ["redmine"]
 
   redmine-db:
     image: mariadb:10.11.9
@@ -207,7 +201,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    profiles: ["redmine"]
 
   nextcloud:
     image: nextcloud:31-apache
@@ -227,7 +220,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 10
-    profiles: ["nextcloud"]
 
   nextcloud-db:
     image: mariadb:10.11.9
@@ -244,7 +236,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    profiles: ["nextcloud"]
 
   n8n:
     image: n8nio/n8n:1.79.2
@@ -262,7 +253,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 10
-    profiles: ["n8n"]
 
   dokuwiki:
     image: lscr.io/linuxserver/dokuwiki:latest
@@ -277,7 +267,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 10
-    profiles: ["wiki"]
 
   mautic:
     image: mautic/mautic:6-apache
@@ -302,7 +291,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 10
-    profiles: ["mautic"]
 
   mautic-cron:
     image: mautic/mautic:6-apache
@@ -332,7 +320,6 @@ services:
     networks: [ internal ]
     restart: unless-stopped
     entrypoint: ["/bin/sh","-lc","/cron-runner.sh"]
-    profiles: ["mautic"]
 
 
 
@@ -351,7 +338,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    profiles: ["mautic"]
 
   mail:
     image: bytemark/smtp
@@ -361,7 +347,6 @@ services:
       SMTP_USER: ${MAIL_USER:-admin@example.com}
       SMTP_PASS: ${MAIL_PASS:-changeme}
     networks: [ internal ]
-    profiles: ["mail"]
 
   mattermost:
     image: mattermost/mattermost-team-edition:10.7
@@ -397,7 +382,6 @@ services:
       interval: 20s
       timeout: 5s
       retries: 10
-    profiles: ["mattermost"]
 
   mattermost-db:
     image: postgres:15
@@ -413,7 +397,6 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
-    profiles: ["mattermost"]
 
   # =================== BACKUP container (tuo) ===================
   backup:
@@ -447,7 +430,6 @@ services:
       - superset_home:/superset_home
     entrypoint: ["/bin/sh","-c","apk add --no-cache bash postgresql-client mariadb-client tar gzip && echo '0 2 * * * /backup/backup.sh >> /backups/backup.log 2>&1' | crontab - && crond -f"]
     networks: [ internal ]
-    profiles: ["backup"]
 
   # =================== SSO (profili: sso) ===================
   keycloak-db:
