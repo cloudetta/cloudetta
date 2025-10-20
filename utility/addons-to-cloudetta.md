@@ -1,15 +1,17 @@
-# rendere tutti i tool selezionabili in fase di bootstrap/deploy
-# agiunggere apache superset
+# aggiungere metabase come tool di BI
+# aggiungere defy.ai e flowise come tool di AI
+# nexcloud forms come tool di survey
+# aggiungere una VPN (openvpn o wireguard) per l'accesso sicuro alla rete interna
+# openproject come tool di project management al posto di redmine
+
+
+
+
 # aggiungere un analytics cookieless
 # aggiungere un tool per la gestione delle secret (hashicorp vault?)
 # aggiungere un tool per la gestione della CI/CD (gitlab + gitlab-runner)
 # aggiungere un tool per la gestione del tracing (jaeger o grafana tempo)
 # aggiungere un tool per la gestione dell'SSO (authelia?)
-
-
-
-
-
 
 Sì, ha senso — dipende da cosa vuoi ottenere.
 
