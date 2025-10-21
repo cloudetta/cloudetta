@@ -182,3 +182,19 @@ andiamo più in profondità analizza i files .env docker-compose.yml e bootstrap
 # aggiungere un tool per la gestione dell'SSO (authelia?)
 
 # Aggiungere openVPN o wireguard per l'accesso sicuro alla rete interna
+
+
+# aggiungere metabase come tool di BI
+# aggiungere defy.ai e flowise come tool di AI
+# nexcloud forms come tool di survey
+# aggiungere una VPN (openvpn o wireguard) per l'accesso sicuro alla rete interna
+# openproject come tool di project management al posto di redmine
+
+
+
+
+# aggiungere un analytics cookieless
+# aggiungere un tool per la gestione delle secret (hashicorp vault?)
+# aggiungere un tool per la gestione della CI/CD (gitlab + gitlab-runner)
+# aggiungere un tool per la gestione del tracing (jaeger o grafana tempo)
+# aggiungere un tool per la gestione dell'SSO (authelia?)
